@@ -14,6 +14,7 @@
 
 #include "xmode.h"
 #include "baller.h"
+#include <stdint.h>
 
 extern volatile int subtick;
 
@@ -105,7 +106,7 @@ smooth_move (int difference, int subtick)
 /* Scroll the star field */
 void gostarfield(void)
 {
-  unsigned long write_address;
+  uintptr_t write_address;
   int i;
 
   _sfield.go = TRUE;
@@ -139,7 +140,7 @@ void gostarfield(void)
 void stopstarfield(void)
 {
   int i;
-  unsigned long write_address;
+  uintptr_t write_address;
 
   _sfield.go = FALSE;
 
@@ -165,7 +166,7 @@ void stopstarfield(void)
 /* Draw the starfield */
 void starfield (void)
 {
-  unsigned long write_address;
+  uintptr_t write_address;
   int i;
 
   if (!_sfield.active) return;

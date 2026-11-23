@@ -151,7 +151,7 @@ struct	anifoe {
    short	flags;		// State Flags. (Invincible, endlvl, ...)
    unsigned short	score;
    short	expl;           // Explosion that will be used.
-   short	shield;         // How many hits until destroyed ?
+   int	shield;           // How many hits until destroyed ?
    short        *path;          // Path pointer stored by MARK.
    short	savex, savey;   // (x, y) for stored by MARK.
    short	*cpath;
@@ -297,6 +297,9 @@ _ext unsigned long   scoreold;                   // Player's score before Level.
 _ext int    cheatlevel;			// flag of Cheatmode.
 
 _ext int    shipspeed;                  // Speed of ship in pixels per frame.
+#ifdef LASTBEER_SDL
+_ext int    game_difficulty;             // Locked for the current run.
+#endif
 _ext int    lifes;
 _ext int    stage;
 _ext int    nweapons;			// # of Weapons active.
@@ -350,6 +353,7 @@ void setspeed(unsigned speed);
 void killallbuddies(void);
 void waitforkey(void);
 int waitdelayedkey(int count);
+void dispscore(void);
 void writetext(int x, int y, const char *text, struct sprstrc *font);
 void writenumber(int x, int y, long number, struct sprstrc *font);
 

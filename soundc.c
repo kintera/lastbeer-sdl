@@ -3,6 +3,14 @@
 #include <stdio.h>
 
 int soundon = 1;
+#ifdef LASTBEER_SDL
+static int sound_preference = 1;
+static int audio_unavailable = 0;
+int sound_config_value(void) { return sound_preference; }
+int sound_unavailable(void) { return audio_unavailable; }
+void sound_startup_failed(void) { soundon = 0; audio_unavailable = 1; }
+void sound_suspend(void) { soundon = 0; audio_unavailable = 0; remove_sound(); }
+#endif
 
 /*speaker:
    state == 0  : Turn sound off.
@@ -14,6 +22,19 @@ int speaker(int state)
   if (state == -1)
     return soundon;
 
+#ifdef LASTBEER_SDL
+  sound_preference = state != 0;
+#endif
+  if (state && !soundon && install_sound(DIGI_AUTODETECT, MIDI_NONE, 0))
+  {
+#ifdef LASTBEER_SDL
+    audio_unavailable = 1;
+#endif
+    return soundon;
+  }
+#ifdef LASTBEER_SDL
+  audio_unavailable = 0;
+#endif
   soundon = state;
   if (!soundon)
     remove_sound ();
@@ -30,9 +51,13 @@ void shutsound (void)
 /* Stop all playing sounds. */
 void haltsound(void)
 {
+#ifdef LASTBEER_SDL
+  compat_stop_all_audio();
+#else
   remove_sound();
   if (soundon)
     install_sound(DIGI_AUTODETECT, MIDI_NONE, 0);
+#endif
 }
 
 void playsample (SAMPLE *s)
@@ -92,7 +117,7 @@ SAMPLE *create_SAMPLE (struct sndstrc *s)
         if (byte < 0x00)
           byte = 0x00;
 
-        new_sample[2*i] = byte;
+        new_sample[2*i - 1] = byte;
 
         if (value >= limit)
           step++;
@@ -116,7 +141,7 @@ SAMPLE *create_SAMPLE (struct sndstrc *s)
           byte = 0xff;
         if (byte < 0x00)
           byte = 0x00;
-        new_sample[2*i + 1] = byte;
+        new_sample[2*i] = byte;
 
         if (value >= limit)
           step++;
@@ -148,4 +173,3 @@ void create_sndstrc (struct sndstrc *s, unsigned char *data)
            + (data[9] << 24);
   s->data = data + 10;
 }
-

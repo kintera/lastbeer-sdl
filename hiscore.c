@@ -17,6 +17,9 @@
 #include "sound.h"
 #include "fileman.h"
 #include "baller.h"
+#ifdef LASTBEER_SDL
+#include "modern/difficulty.h"
+#endif
 
 struct playerdatas{
    long score;
@@ -28,7 +31,7 @@ struct highscoretext{
    char winnertext[NOCW+1];
 };
 
-static struct highscoretext hstxt={{{   81000L, "ATOMMUELL"},
+static struct highscoretext classic_scores={{{   81000L, "ATOMMUELL"},
 				    {   29600L, "POWER"},
 				    {   14800L, "JUBEL"},
 				    {    8110L, "ZYNAX"},
@@ -37,6 +40,20 @@ static struct highscoretext hstxt={{{   81000L, "ATOMMUELL"},
 				    {    4558L, "TWEETY"},
 				    {       1L, "TRITONE"}},
 				   "EIN PROSIT AUF ALPHA-HELIX"};
+static struct highscoretext *current_scores = &classic_scores;
+#define hstxt (*current_scores)
+#ifdef LASTBEER_SDL
+static struct highscoretext easy_scores, hard_scores;
+static struct highscoretext *score_table(int difficulty)
+{
+   return difficulty == DIFFICULTY_EASY ? &easy_scores :
+          difficulty == DIFFICULTY_HARD ? &hard_scores : &classic_scores;
+}
+static const char *difficulty_name(int difficulty)
+{
+   return difficulty == DIFFICULTY_EASY ? "EASY" : difficulty == DIFFICULTY_HARD ? "HARD" : "CLASSIC";
+}
+#endif
 
 static void cursorblink(int x, int y, char symbol, struct sprstrc *font)
 {
@@ -94,16 +111,156 @@ static void decodescore(void)
 
 void loadhighscore(int *filvar)
 {
-   read(*filvar, &hstxt, sizeof(struct highscoretext));
-   decodescore();
+   struct highscoretext saved;
+#ifdef LASTBEER_SDL
+   struct highscoretext *previous = current_scores;
+   current_scores = &classic_scores;
+#endif
+   if (read(*filvar, &saved, sizeof(saved)) != sizeof(saved)) {
+#ifdef LASTBEER_SDL
+      current_scores = previous;
+#endif
+      return;
+   }
+   {
+      struct highscoretext original = hstxt;
+      hstxt = saved;
+      decodescore();
+      for (int i = 0; i < MAXENTRIES; ++i)
+         if (!memchr(hstxt.player[i].name, 0, sizeof(hstxt.player[i].name))) {
+            hstxt = original;
+#ifdef LASTBEER_SDL
+            current_scores = previous;
+#endif
+            return;
+         }
+      if (!memchr(hstxt.winnertext, 0, sizeof(hstxt.winnertext))) hstxt = original;
+   }
+#ifdef LASTBEER_SDL
+   {
+      char magic[4];
+      if (read(*filvar, magic, sizeof(magic)) == sizeof(magic) && memcmp(magic, "DIF1", 4) == 0) {
+         struct highscoretext extra[2];
+         if (read(*filvar, extra, sizeof(extra)) == sizeof(extra)) {
+            struct highscoretext decoded[2];
+            int valid = 1;
+            for (int d = 0; d < 2; ++d) {
+               struct highscoretext original;
+               current_scores = d ? &hard_scores : &easy_scores;
+               original = hstxt;
+               hstxt = extra[d];
+               decodescore();
+               for (int i = 0; i < MAXENTRIES; ++i)
+                  if (!memchr(hstxt.player[i].name, 0, sizeof(hstxt.player[i].name))) valid = 0;
+               if (!memchr(hstxt.winnertext, 0, sizeof(hstxt.winnertext))) valid = 0;
+               decoded[d] = hstxt;
+               hstxt = original;
+            }
+            if (valid) { easy_scores = decoded[0]; hard_scores = decoded[1]; }
+         }
+      }
+   }
+   current_scores = previous;
+#endif
 }
 
 void savehighscore(int *filvar)
 {
+#ifdef LASTBEER_SDL
+   struct highscoretext *previous = current_scores;
+   current_scores = &classic_scores;
+#endif
    codescore();
    write(*filvar, &hstxt, sizeof(struct highscoretext));
    decodescore();
+#ifdef LASTBEER_SDL
+   write(*filvar, "DIF1", 4);
+   current_scores = &easy_scores; codescore(); write(*filvar, &hstxt, sizeof(hstxt)); decodescore();
+   current_scores = &hard_scores; codescore(); write(*filvar, &hstxt, sizeof(hstxt)); decodescore();
+   current_scores = previous;
+#endif
 }
+
+#ifdef LASTBEER_AUTOMATION
+int compat_test_score_storage(void)
+{
+   struct highscoretext saved_classic = classic_scores, saved_easy = easy_scores, saved_hard = hard_scores;
+   struct highscoretext *previous = current_scores;
+   FILE *file = tmpfile();
+   int ok = 1, fd;
+   if (!file) return 0;
+   fd = fileno(file);
+   memset(&classic_scores, 0, sizeof(classic_scores));
+   memset(&easy_scores, 0, sizeof(easy_scores));
+   memset(&hard_scores, 0, sizeof(hard_scores));
+   classic_scores.player[0].score = 222; strcpy(classic_scores.player[0].name, "CLASSIC");
+   easy_scores.player[0].score = 111; strcpy(easy_scores.player[0].name, "EASY");
+   hard_scores.player[0].score = 333; strcpy(hard_scores.player[0].name, "HARD");
+   current_scores = &hard_scores;
+   savehighscore(&fd);
+   memset(&classic_scores, 0, sizeof(classic_scores));
+   memset(&easy_scores, 0, sizeof(easy_scores));
+   memset(&hard_scores, 0, sizeof(hard_scores));
+   if (lseek(fd, 0, SEEK_SET) < 0) ok = 0;
+   loadhighscore(&fd);
+   if (classic_scores.player[0].score != 222 || easy_scores.player[0].score != 111 ||
+       hard_scores.player[0].score != 333 || strcmp(easy_scores.player[0].name, "EASY") ||
+       strcmp(hard_scores.player[0].name, "HARD") || current_scores != &hard_scores) ok = 0;
+   /* A file from before difficulty support must still load as Classic. */
+   if (ftruncate(fd, sizeof(classic_scores)) || lseek(fd, 0, SEEK_SET) < 0) ok = 0;
+   memset(&classic_scores, 0, sizeof(classic_scores));
+   memset(&easy_scores, 0, sizeof(easy_scores));
+   memset(&hard_scores, 0, sizeof(hard_scores));
+   loadhighscore(&fd);
+   if (classic_scores.player[0].score != 222 || easy_scores.player[0].score || hard_scores.player[0].score) ok = 0;
+   fclose(file);
+   classic_scores = saved_classic; easy_scores = saved_easy; hard_scores = saved_hard; current_scores = previous;
+   return ok;
+}
+
+void compat_test_prepare_score_entry(int difficulty)
+{
+   const char *rank = getenv("LASTBEER_TEST_SCORE_RANK");
+   if (rank && strcmp(rank, "second") == 0) {
+      struct highscoretext *table = score_table(difficulty);
+      table->player[0].score = 120000;
+      strcpy(table->player[0].name, "CHAMP");
+      strcpy(table->winnertext, "CHAMPION");
+   }
+   if (rank && strcmp(rank, "none") == 0) saveconfig();
+}
+
+int compat_test_score_entry(int difficulty)
+{
+   struct highscoretext saved_classic = classic_scores, saved_easy = easy_scores, saved_hard = hard_scores;
+   struct highscoretext *previous = current_scores;
+   const char *path = compat_config_path();
+   const char *rank = getenv("LASTBEER_TEST_SCORE_RANK");
+   int second = rank && strcmp(rank, "second") == 0;
+   int no_entry = rank && strcmp(rank, "none") == 0;
+   int fd = path ? open(path, O_RDONLY) : -1;
+   int ok = 0;
+   if (fd < 0) return 0;
+   memset(&classic_scores, 0, sizeof(classic_scores));
+   memset(&easy_scores, 0, sizeof(easy_scores));
+   memset(&hard_scores, 0, sizeof(hard_scores));
+   if (lseek(fd, 7 * sizeof(short), SEEK_SET) >= 0) {
+      loadhighscore(&fd);
+      current_scores = score_table(difficulty);
+      ok = (no_entry || (hstxt.player[second].score == 100000 &&
+           strcmp(hstxt.player[second].name, "A") == 0 &&
+           strcmp(hstxt.winnertext, second ? "CHAMPION" : "B") == 0 &&
+           (!second || (hstxt.player[0].score == 120000 && strcmp(hstxt.player[0].name, "CHAMP") == 0)))) &&
+           (!no_entry || hstxt.player[0].score == (difficulty == DIFFICULTY_CLASSIC ? 81000 : 0)) &&
+           (difficulty == DIFFICULTY_CLASSIC || classic_scores.player[0].score == 81000) &&
+           (difficulty == DIFFICULTY_EASY || easy_scores.player[0].score == 0) &&
+           (difficulty == DIFFICULTY_HARD || hard_scores.player[0].score == 0);
+   }
+   close(fd);
+   classic_scores = saved_classic; easy_scores = saved_easy; hard_scores = saved_hard; current_scores = previous;
+   return ok;
+}
+#endif
 
 void highscore(char fullmode)
 {
@@ -115,6 +272,10 @@ void highscore(char fullmode)
    struct sndstrc snd;
    void *ptr;
    SAMPLE *s;
+#ifdef LASTBEER_SDL
+   int score_difficulty = fullmode ? game_difficulty : compat_difficulty();
+   current_scores = score_table(score_difficulty);
+#endif
 
    setvanillapalette(0);
    setpage(0); showpage(0); clearscreen();
@@ -158,6 +319,10 @@ void highscore(char fullmode)
       writetext(NXOFFS,YOFFS+i*14,hstxt.player[i].name,font);
       writenumber(SXOFFS,YOFFS+i*14,hstxt.player[i].score,font);
    }
+#ifdef LASTBEER_SDL
+   writetext(8, 43, difficulty_name(score_difficulty), font2);
+   if (!fullmode) writetext(164, 43, "LEFT / RIGHT", font2);
+#endif
    x=(320-strlen(hstxt.winnertext)*font2->xs)/2;
    writetext(x,YOFFS+(MAXENTRIES+3)*14-6,hstxt.winnertext,font2);
    glowin(0);
@@ -170,6 +335,9 @@ void highscore(char fullmode)
       x=NXOFFS;
       //setvect(0x09, int09);
       do{
+#ifdef LASTBEER_AUTOMATION
+         if (getenv("LASTBEER_TEST_SCORE_ENTRY")) TEST_STAGE("score-name");
+#endif
 	 cursorblink(x,YOFFS+currentpl*14,hstxt.player[currentpl].name[i],font);
          /* Read ASCII value */
 	 keys=readkey() & 0xFF;
@@ -208,6 +376,9 @@ void highscore(char fullmode)
 	 i=0;
 	 xs=font2->xs;
 	 do{
+#ifdef LASTBEER_AUTOMATION
+            if (getenv("LASTBEER_TEST_SCORE_ENTRY")) TEST_STAGE("score-winner");
+#endif
 	    if(i == NOCW){
 	       x = (320 + (NOCW-3) * xs) / 2;
 	       cursorblink(x,YOFFS+(MAXENTRIES+3)*14-6,hstxt.winnertext[i-1],font2);
@@ -259,8 +430,57 @@ void highscore(char fullmode)
       writenumber(SXOFFS,YOFFS+(MAXENTRIES+1)*14-3,score,font);
       showpage(page);
    }
-   clear_keybuf();
-   while (!keypressed());
+   /* Submitting a score already confirms the screen; do not require a
+      second, unexplained key press before returning to the menu. */
+   if (!inlist) {
+#ifdef LASTBEER_SDL
+      if (fullmode) {
+         const char *prompt = "PRESS A KEY / BUTTON";
+         writetext((320 - strlen(prompt) * font2->xs) / 2, 43, prompt, font2);
+         showpage(page);
+      }
+#endif
+      clear_keybuf();
+#ifdef LASTBEER_AUTOMATION
+      TEST_MENU_CAPTURE(1);
+      showpage(0);
+      TEST_MENU_CAPTURE(0);
+      if (!fullmode) compat_test_score_view(score_difficulty);
+      TEST_STAGE("score");
+#endif
+      while (!keypressed());
+#ifdef LASTBEER_SDL
+      if (!fullmode) {
+         for (;;) {
+            int scan = (readkey() >> 8) & 255;
+            if (scan != key_left && scan != key_right) break;
+            score_difficulty = (score_difficulty + (scan == key_left ? 2 : 1)) % 3;
+            current_scores = score_table(score_difficulty);
+            clear_bitmap(full_pages[0]); clear_bitmap(full_pages[1]);
+            setpage(0);
+            char *background = loadfile(datapool, "SCORE.PCX");
+            showpcx256(background, 0); unloadfile(background);
+            for (i = 0; i < MAXENTRIES; ++i) {
+               writetext(NXOFFS, YOFFS+i*14, hstxt.player[i].name, font);
+               writenumber(SXOFFS, YOFFS+i*14, hstxt.player[i].score, font);
+            }
+            writetext(8, 43, difficulty_name(score_difficulty), font2);
+            writetext(164, 43, "LEFT / RIGHT", font2);
+            x = (320-strlen(hstxt.winnertext)*font2->xs)/2;
+            writetext(x, YOFFS+(MAXENTRIES+3)*14-6, hstxt.winnertext, font2);
+            showpage(0);
+#ifdef LASTBEER_AUTOMATION
+            TEST_MENU_CAPTURE(1);
+            showpage(0);
+            TEST_MENU_CAPTURE(0);
+            compat_test_score_view(score_difficulty);
+            TEST_STAGE("score");
+#endif
+            while (!keypressed());
+         }
+      }
+#endif
+   }
 
    glowout();
    stop_sample (s);
@@ -268,5 +488,7 @@ void highscore(char fullmode)
 
    unloadfile(font2_file); free (font2);
    unloadfile(font_file); free (font);
+#ifdef LASTBEER_SDL
+   current_scores = &classic_scores;
+#endif
 }
-

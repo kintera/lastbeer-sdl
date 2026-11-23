@@ -19,6 +19,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <errno.h>
+#include <stdint.h>
 
 #include "fileman.h"
 
@@ -63,6 +64,7 @@ struct entrystrc {
    int    flags;
 };
 
+static char   *xmsbase;
 static char   *xmspointer;      // Pointer to free XMS.
 static ulong  freexms;          // Free extended mem.
 static int    nentries;		// # of table entries.
@@ -97,13 +99,15 @@ int initfilemanager(int handles,
    entry = NULL;
 
    /* Always allocate the maxsize. */
-   xmspointer = malloc (freexms = maxsize);
+   xmsbase = xmspointer = malloc (freexms = maxsize);
    if (!xmspointer) return -1;
 
 // Allocate memory for the buffer table.
    nentries = handles;
    entry = (struct entrystrc *)calloc(nentries, sizeof(struct entrystrc));
    if (entry == NULL) {
+      free(xmsbase);
+      xmsbase = xmspointer = NULL;
       return -1;                // Fatal error.
    }
 
@@ -122,7 +126,11 @@ Description: Leaves the filemanager and frees the allocated
 ------------------------------------------------------*/
 void shutfilemanager(void)
 {
-   if (entry != NULL) free(entry);
+   free(entry);
+   free(xmsbase);
+   entry = NULL;
+   xmsbase = xmspointer = NULL;
+   nentries = 0;
 #ifdef DEBUG
    printf("\nDOS free memory: %ld bytes.\n", mindosmem);
 #endif
@@ -153,7 +161,7 @@ static struct entrystrc *findfreeentry(void)
    for (i = 0; i < nentries; i++) {
       if (entry[i].size == 0) break;
    }
-   if (entry[i].size == 0) return &entry[i]; else return NULL;
+   if (i < nentries) return &entry[i]; else return NULL;
 
 }
 
@@ -194,7 +202,8 @@ static void freeentry(int i)
    if (i < nentries-1) {
       memmove(result, result+1, (nentries-i-1)*sizeof(struct entrystrc));
    }
-   for ( ; i < nentries-1; i++) entry[i].addr -= size;
+   for ( ; i < nentries-1; i++)
+      if (entry[i].size != 0) entry[i].addr -= size;
    entry[nentries-1].size = 0;		// Mark free slot.
 }
 
@@ -240,7 +249,7 @@ static void buffer(char *file, void *data, ulong size, int flags)
 	    if (!lightxms()) break;	// Try to make space.
       }
       result = findfreeentry();
-      if (result != NULL && (freexms >= size)) {
+      if (result != NULL && (freexms >= size) && strlen(file) < sizeof(result->name)) {
 	 strcpy(result->name, file);
 	 result->size = size;
 	 result->addr = xmspointer;
@@ -266,57 +275,76 @@ Description: Opens a special type of file: The Alpha-Helix
 	     James Bond Baller game data library file
 	     type.
 ------------------------------------------------------*/
+static uint32_t read_le32(const unsigned char *p)
+{
+   return (uint32_t)p[0] | (uint32_t)p[1] << 8 |
+          (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
 void *opendatabase(char *file)
 {
-   FILE   *filvar;
-   int    nfiles;
-   uint   nread;
+   FILE *filvar;
    struct dbasestrc *ptr;
-   char   hdr[HDRSIZE];
-   int    mode;
-   char byte;
+   unsigned char header[HDRSIZE + 4];
+   size_t nfiles, directory_size;
+   long archive_size;
+   char *fullpath = malloc(strlen(DATADIR) + strlen(file) + 2);
 
-   char *fullpath = alloca (strlen (DATADIR) + 1 + strlen (file) + 1);
-   sprintf (fullpath, "%s/%s", DATADIR,  file);
-
-   /* Look for installed data file; failing that, look in current
-      directory. */
-   if (!(filvar = fopen(fullpath, "rb"))
-       && !(filvar = fopen(file, "rb"))) {
+   if (!fullpath) {
+      (*error)("opendatabase", ENOMEM);
+      return NULL;
+   }
+   sprintf(fullpath, "%s/%s", DATADIR, file);
+   filvar = fopen(fullpath, "rb");
+   free(fullpath);
+   if (!filvar) filvar = fopen(file, "rb");
+   if (!filvar) {
       (*error)("opendatabase", ENOENT, file);
       return NULL;
    }
 
-   fread (hdr, HDRSIZE, 1, filvar);
-
-   fread (&byte, 1, 1, filvar);
-   mode = byte;
-   fread (&byte, 1, 1, filvar);
-   mode += byte << 8;
-   fread (&byte, 1, 1, filvar);
-   nfiles = byte;
-   fread (&byte, 1, 1, filvar);
-   nfiles += byte << 8;
-
-   ptr = malloc(sizeof(struct dbasestrc) + nfiles*SIZE_OF_FILE_HEADER);
-
-   if (ptr == NULL) {
+   if (fseek(filvar, 0, SEEK_END) != 0 || (archive_size = ftell(filvar)) < 0 ||
+       fseek(filvar, 0, SEEK_SET) != 0 ||
+       fread(header, 1, sizeof(header), filvar) != sizeof(header)) {
       fclose(filvar);
-      (*error)("opendatabase", ENOENT);
+      (*error)("opendatabase", EIO);
       return NULL;
    }
-
-// Fill in the newly created structure.
-   strcpy(ptr->basename, file);
+   nfiles = (size_t)header[32] | (size_t)header[33] << 8;
+   directory_size = nfiles * SIZE_OF_FILE_HEADER;
+   if (directory_size > (size_t)archive_size - sizeof(header)) {
+      fclose(filvar);
+      (*error)("opendatabase", EIO);
+      return NULL;
+   }
+   ptr = malloc(sizeof(*ptr) + directory_size);
+   if (!ptr) {
+      fclose(filvar);
+      (*error)("opendatabase", ENOMEM);
+      return NULL;
+   }
    ptr->filvar = filvar;
-   ptr->nfiles = nfiles;
-   fread ((void *)ptr->file, 
-          nfiles*SIZE_OF_FILE_HEADER,
-          1,
-          filvar);
-
-   return (void *)ptr;
-
+   ptr->nfiles = (int)nfiles;
+   ptr->basename[0] = '\0'; /* openfile is not implemented. */
+   if (fread(ptr->file, 1, directory_size, filvar) != directory_size) {
+      fclose(filvar);
+      free(ptr);
+      (*error)("opendatabase", EIO);
+      return NULL;
+   }
+   for (size_t i = 0; i < nfiles; i++) {
+      const unsigned char *record = (const unsigned char *)ptr->file + i * SIZE_OF_FILE_HEADER;
+      uint32_t size = read_le32(record + SIZE_OFFSET);
+      uint32_t offset = read_le32(record + FPTR_OFFSET);
+      if (!memchr(record, '\0', 14) || offset > (uint64_t)archive_size ||
+          size > (uint64_t)archive_size - offset) {
+         fclose(filvar);
+         free(ptr);
+         (*error)("opendatabase", EIO);
+         return NULL;
+      }
+   }
+   return ptr;
 }
 
 /*------------------------------------------------------
@@ -334,6 +362,21 @@ void closedatabase(void *database)
 }
 
 
+int database_file_size(void *database, const char *file, size_t *size)
+{
+   const struct dbasestrc *db = database;
+   int i;
+   if (!db || !file || !size) return 0;
+   for (i = 0; i < db->nfiles; ++i) {
+      const unsigned char *record = (const unsigned char *)db->file + i * SIZE_OF_FILE_HEADER;
+      if (strcmp(file, (const char *)record) == 0) {
+         *size = read_le32(record + SIZE_OFFSET);
+         return 1;
+      }
+   }
+   return 0;
+}
+
 /*------------------------------------------------------
 Function: loadfile
 
@@ -345,10 +388,8 @@ unsigned char *loadfile(void *database, char *file)
    struct entrystrc *result;
    struct dbasestrc *ptr;
    unsigned char   *data;
-   unsigned char   *p;
-   ulong  fsize, msize;		// file and memory size of file respectively.
+   ulong  msize;
    int    i, j;
-   uint   nread;
 
    ptr = (struct dbasestrc *)database;
    result = findentry(file);
@@ -372,7 +413,7 @@ unsigned char *loadfile(void *database, char *file)
          
          /* File record begins with name so a pointer to it is a pointer
             to the name. */
-	 if (strcmp(file, rec_ptr) == 0) {
+	 if (strcmp(file, (const char *)rec_ptr) == 0) {
 	    j = i;
 	    break;
 	 }
@@ -382,36 +423,23 @@ unsigned char *loadfile(void *database, char *file)
 	 return NULL;
       }
 
-      /* Read 4 byte size record */
-      size = rec_ptr [SIZE_OFFSET];
-      size += rec_ptr [SIZE_OFFSET + 1] << 8;
-      size += rec_ptr [SIZE_OFFSET + 2] << 16;
-      size += rec_ptr [SIZE_OFFSET + 3] << 24;
-
-      /* Read 2 byte flags record */
-      flags = rec_ptr [FLAGS_OFFSET];
-      flags += rec_ptr [FLAGS_OFFSET + 1] << 8;
-
-      /* Read 4 byte fptr record */
-      fptr = rec_ptr [FPTR_OFFSET];
-      fptr += rec_ptr [FPTR_OFFSET + 1] << 8;
-      fptr += rec_ptr [FPTR_OFFSET + 2] << 16;
-      fptr += rec_ptr [FPTR_OFFSET + 3] << 24;
-
-      fseek(ptr->filvar, fptr, SEEK_SET);
-      fsize = size;
-      msize = (fsize + 1) & 0xfffffffel;	// make it even.
+      size = read_le32(rec_ptr + SIZE_OFFSET);
+      flags = rec_ptr[FLAGS_OFFSET] | rec_ptr[FLAGS_OFFSET + 1] << 8;
+      fptr = read_le32(rec_ptr + FPTR_OFFSET);
+      msize = (size + 1) & ~(ulong)1;
+      if (!msize) msize = 1;
       if ((data = malloc(msize)) == NULL) {
-	 (*error)("loadfile", ENOENT);
-	 return NULL;
+         (*error)("loadfile", ENOMEM);
+         return NULL;
       }
-      p = data;
-      while (fsize > 65000) {
-         fread(p, 1, 65000, ptr->filvar);
-	 fsize -= 65000; p += 65000;
+      if (fseek(ptr->filvar, fptr, SEEK_SET) != 0 ||
+          fread(data, 1, size, ptr->filvar) != size) {
+         free(data);
+         (*error)("loadfile", EIO);
+         return NULL;
       }
-      nread = fread(p, 1, fsize, ptr->filvar);
 
+      if (msize > size) data[size] = 0;
       buffer(file, data, size, flags);
    }
 
@@ -469,7 +497,7 @@ void *loadfiledirect(char *file, int flags)
 	 fsize -= 65000; p += 65000;
       }
       nread = fread(p, 1, fsize, filvar);
-      close(filvar);
+      fclose(filvar);
 
       buffer(file, ptr, msize, flags);
    }

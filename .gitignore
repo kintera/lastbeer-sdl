@@ -17,3 +17,7 @@ missing
 beer
 *~
 *.o
+
+# CMake build directories
+/build/
+/build-*/

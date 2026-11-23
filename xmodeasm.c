@@ -32,8 +32,12 @@ void setxmode (void)
   request_refresh_rate (60);
   set_gfx_mode (run_in_fullscreen ? GFX_AUTODETECT_FULLSCREEN
                                   : GFX_AUTODETECT_WINDOWED,
+#ifdef LASTBEER_SDL
+                320, 240, 0, 0);
+#else
                 DISPLAY_SCALE * 320,
                 DISPLAY_SCALE * 240, 0, 0);
+#endif
 }
 
 #if 0
@@ -424,7 +428,7 @@ void putsprite(int sprite, int x, int y, int n)
   masked_blit(s, pages[page], 0, 0, x, y, s->w, s->h);
 }
 
-static putflash (int handle, int x, int y, int n)
+static void putflash (int handle, int x, int y, int n)
 {
   BITMAP *s = _sprite[handle].bmp_silhouette[n];
 

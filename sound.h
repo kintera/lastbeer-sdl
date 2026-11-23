@@ -27,4 +27,9 @@ void playfileloop(int filvar, void *buffer, int bs);
 void haltsound(void);
 int soundbusy(void);
 int speaker(int state);
-
+#ifdef LASTBEER_SDL
+int sound_config_value(void);
+int sound_unavailable(void);
+void sound_startup_failed(void);
+void sound_suspend(void);
+#endif

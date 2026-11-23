@@ -182,10 +182,13 @@ void killsprite(int sprite)
       _sprite[sprite].active = FALSE;
 
       for (i = 0; i < _sprite[sprite].maxn / 2; i++) {
-        destroy_bitmap (_sprite[sprite].bmp[i]); 
-        destroy_bitmap (_sprite[sprite].bmp_silhouette[i]); 
+        destroy_bitmap (_sprite[sprite].bmp[i]);
+        destroy_bitmap (_sprite[sprite].bmp_silhouette[i]);
       }
-
+      free(_sprite[sprite].bmp);
+      free(_sprite[sprite].bmp_silhouette);
+      _sprite[sprite].bmp = NULL;
+      _sprite[sprite].bmp_silhouette = NULL;
    }
 }
 
@@ -195,10 +198,7 @@ void killallsprites(void)
    int   i;
 
    for (i = 0; i < MAXSPRITES; i++) {
-      if (_sprite[i].active) {
-	 free(_sprite[i].mask);
-	 _sprite[i].active = FALSE;
-      }
+      if (_sprite[i].active) killsprite(i);
    }
 }
 

@@ -11,6 +11,9 @@
 #include "fileman.h"
 #include "sound.h"
 #include "baller.h"
+#ifdef LASTBEER_SDL
+#include "modern/difficulty.h"
+#endif
 
 
 #define STARTLOGOX		68
@@ -332,7 +335,9 @@ static void showstartlogo(char *text)
    putspritedirect(logo, STARTLOGOX, STARTLOGOY, 0);
    writetext(XMAX/2-strlen(text)*font->xs/2, STARTTEXTY, text, font);
    showpage(page);
-
+#ifdef LASTBEER_AUTOMATION
+   TEST_STAGE("start");
+#endif
    while (!keypressed());
 
    clearscreen();
@@ -355,7 +360,7 @@ static void showwinpic(void)
    struct sprstrc *font;
    void	  *ptr;
 
-   while(pressedkeys);
+   while(pressedkeys) rest(1);
    setvanillapalette(0);
    setpage(0); clearscreen(); showpage(0);
    ptr = loadfile(datapool, "SKY.PCX");
@@ -392,7 +397,9 @@ static void showendlogo(void)
    create_sndstrc (&snd, snd_data);
    playsample(create_SAMPLE(&snd));
    glowin(0);
-
+#ifdef LASTBEER_AUTOMATION
+   TEST_STAGE("end");
+#endif
    waitforkey();
 
    glowout();
@@ -481,7 +488,7 @@ static void initlevel(int stage)
    level.star = (struct starstrc *)(ptr+2);
 
 // Starfield definition.
-   defstarfield(level.nstars, level.star);
+   defstarfield(level.nstars, (unsigned char *)level.star);
    gostarfield();
 
 // Add bonus score and money.
@@ -534,6 +541,10 @@ void playthegame(void)
 {
    int    feedback;
 
+#ifdef LASTBEER_SDL
+   game_difficulty = compat_difficulty();
+   if (game_difficulty == DIFFICULTY_HARD) srand((unsigned)compat_ticks());
+#endif
    newgame();
 
    do {
@@ -564,6 +575,22 @@ void playthegame(void)
       showendlogo();
    }
 
+#ifdef LASTBEER_AUTOMATION
+   if (getenv("LASTBEER_TEST_SCORE_ENTRY")) {
+      const char *rank = getenv("LASTBEER_TEST_SCORE_RANK");
+      score = rank && strcmp(rank, "none") == 0 ? 0 : 100000;
+      compat_test_prepare_score_entry(game_difficulty);
+   }
+#endif
    highscore(TRUE);
+#ifdef LASTBEER_AUTOMATION
+   if (getenv("LASTBEER_TEST_SCORE_ENTRY")) {
+      if (!compat_test_score_entry(game_difficulty)) {
+         fprintf(stderr, "SMOKE: entered score was not saved correctly\n");
+         exit(1);
+      }
+      TEST_STAGE("score-entry-done");
+   }
+#endif
 
 }

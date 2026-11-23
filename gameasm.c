@@ -1,7 +1,13 @@
 /* Allegro port Copyright (C) 2014 Gavin Smith. */
-#define MAIN_MODULE
 #include "baller.h"
 #include "xmode.h"
+#include "sound.h"
+#ifdef LASTBEER_SDL
+#include "modern/difficulty.h"
+#endif
+#ifdef LASTBEER_AUTOMATION
+static int test_crossing_slot = -1;
+#endif
 
 /*  Structure to save a complete position during the game.
     This is used to get back to a 'try again' point if the
@@ -23,9 +29,9 @@ short nbigboss;  /* Number of endlevel monsters that
                     must still be destroyed. */
 
 /* Variables used to draw the score. */
-short scoredigit;               /* # of digits already drawn. */
-short scorepos;                 /* Current x position. */
-int playscore;                /* Remaining score. */
+extern short scoredigit;        /* # of digits already drawn. */
+extern short scorepos;                 /* Current x position. */
+extern int playscore;                /* Remaining score. */
 
 short const10d;               /* Faster Division. */
 
@@ -66,6 +72,7 @@ int defarm (int x, int y, struct armstrc *arm)
     }
     a++;
   }
+  return -1;
 }
 
 /* defshot: Define a shot.
@@ -86,7 +93,7 @@ int defshot (int shot, int x, int y, struct anishot *addr)
   } while (--ctr);
 
   /* If empty slot not found */
-  if (ptr - (struct anishot *) &_shot == MAXSHOTS) return;
+  if (ptr - (struct anishot *) &_shot == MAXSHOTS) return -1;
 
   /* Really don't know why we do this. Only done when shots are releasing
      other shots. */
@@ -99,6 +106,12 @@ int defshot (int shot, int x, int y, struct anishot *addr)
   /* Note: ss->data is an array, so we are pointing to the first element. */
   ptr->data = ss->data;
   ptr->power = ss->power;
+#ifdef LASTBEER_SDL
+  ptr->power = difficulty_shot_power(game_difficulty, ptr->power);
+#ifdef LASTBEER_AUTOMATION
+  compat_test_shot_power(game_difficulty, ss->power, ptr->power);
+#endif
+#endif
   ptr->speed = ss->speed;
 
   return ptr->object = defobject(intindex[ss->sprite],
@@ -135,6 +148,9 @@ void deffoe (short foe, short x, short y, short x0, short y0)
   if (!(ptr->flags & (FOE_TRANSPARENT | FOE_INVINCIBLE))) {
     /* Foe can explode. */
     ptr->shield = fs->shield;
+#ifdef LASTBEER_SDL
+    ptr->shield = difficulty_enemy_shield(game_difficulty, ptr->shield);
+#endif
     ptr->score = fs->score;
     ptr->expl = fs->expl;
   }
@@ -204,8 +220,11 @@ void defexpl (int obj, int explosion)
       break;
   } while (ptr++, --ctr);
 
-  if (ctr == 0)
+  if (ctr == 0) {
+    /* The object still needs to disappear if all explosion slots are busy. */
+    abandonobject (obj);
     return;
+  }
 
   ptr->object = obj;
   ptr->data = ptrindex [lexplofs + explosion];
@@ -288,7 +307,7 @@ void a_shot (void)
       case SHOTEND:
         abandonobject (ptr->object);
         ptr->object = -1;
-        break;
+        continue;
       case SHOTRELEASE:
         if (subtick != 0)
           continue;
@@ -645,6 +664,10 @@ void foehit (void)
           abandonobject (s->object);
           s->object = -1;
         }
+
+        /* The foe no longer has an object after a fatal hit. */
+        if (ptr->object == -1)
+          break;
       }
     } while (s++, --sctr);
   } while (ptr++, --ctr);
@@ -743,37 +766,30 @@ void keyboard (void)
     fire (key[key_fire]);
 
   int xchange = 0, ychange = 0;
+  int movement_speed = shipspeed;
+#ifdef LASTBEER_SDL
+  movement_speed = difficulty_speed(game_difficulty, shipspeed);
+#endif
 
-  if (key[KEY_ALT] && key[KEY_ENTER])
-    toggle_fullscreen ();
+#ifndef LASTBEER_SDL
+  {
+    static int fullscreen_key_down;
+    int combination = key[KEY_ALT] && key[KEY_ENTER];
+    if (combination && !fullscreen_key_down) toggle_fullscreen();
+    fullscreen_key_down = combination;
+  }
+#endif
 
-  if (key[key_left])
-    xchange -= shipspeed;
-  if (key[key_right])
-    xchange += shipspeed;
-  if (key[key_up])
-    ychange -= shipspeed;
-  if (key[key_down])
-    ychange += shipspeed;
-
-  xchange /= RESOLUTION;
-  ychange /= RESOLUTION;
-
-  if (subtick % RESOLUTION < shipspeed % RESOLUTION)
-    {
-      if (xchange > 0)
-        xchange++;
-      if (xchange < 0)
-        xchange--;
-      if (ychange > 0)
-        ychange++;
-      if (ychange < 0)
-        ychange--;
-    }
+  {
+    int step = movement_speed / RESOLUTION;
+    if (subtick % RESOLUTION < movement_speed % RESOLUTION) ++step;
+    xchange = ((key[key_right] != 0) - (key[key_left] != 0)) * step;
+    ychange = ((key[key_down] != 0) - (key[key_up] != 0)) * step;
+  }
 
   if (key[key_pause]) {
     /* Wait for pause key to be released. */
-    while (key[key_pause]);
+    while (key[key_pause]) rest(1);
 
     /* Wait for key to be pressed. */
     clear_keybuf();
@@ -781,7 +797,7 @@ void keyboard (void)
 
     /* If the player pressed the pause key to unpause, wait until the key
        is lifted to avoid pausing again. */
-    while (key[key_pause]);
+    while (key[key_pause]) rest(1);
   }
   a_arm(xchange, ychange);
 }
@@ -830,12 +846,51 @@ void setplayposition (short nattacks, struct attackstrc *attack, short nbigb)
   lastposition.count = 0;
 }
 
+#ifdef LASTBEER_SDL
+/* Reuse a modest, destructible enemy from the current level, without its
+   scripted path or boss/stop-count behavior. */
+static void spawn_hard_crossing(void)
+{
+  int chosen = -1, eligible = 0, slot = -1;
+  for (int i = 0; i < MAXFOES; ++i) if (_foe[i].object == -1) { slot = i; break; }
+  if (slot < 0) return;
+  for (int i = 0; i < level.nfoes; ++i) {
+    struct foestrc *foe = level.foe[i];
+    if (!difficulty_regular_enemy(foe->flags, foe->shield, foe->score, foe->sprite,
+                                  level.nsprites, foe->expl, level.nexpls)) continue;
+    if (rand() % ++eligible == 0) chosen = i;
+  }
+  if (chosen < 0) return;
+  int direction = (rand() & 1) ? 1 : -1;
+  int y = 8 + rand() % 28;
+  deffoe(chosen, direction > 0 ? windowx0 : windowx1, y, 0, 0);
+  if (_foe[slot].object < 0) return;
+  _foe[slot].flags = FOE_LINE;
+  _foe[slot].speed = 3;
+  _foe[slot].dx = windowx1 - windowx0;
+  _foe[slot].dy = 0;
+  _foe[slot].dz = 0;
+  _foe[slot].z0 = direction;
+  _foe[slot].z1 = 0;
+#ifdef LASTBEER_AUTOMATION
+  test_crossing_slot = slot;
+  compat_test_hard_spawn(chosen, slot, _obj[_foe[slot].object].x, direction);
+#endif
+}
+#endif
+
 int play()
 {
   short terminate, nattacks;
 
   short count;
   struct attackstrc *attack;
+#ifdef LASTBEER_SDL
+  int hard_spawn_timer = game_difficulty == DIFFICULTY_HARD ? GAMESPEED * 6 + rand() % (GAMESPEED * 5) : 0;
+#ifdef LASTBEER_AUTOMATION
+  if (getenv("LASTBEER_TEST_HARD_SPAWN") || getenv("LASTBEER_TEST_DIFFICULTY_MENU")) hard_spawn_timer = 2;
+#endif
+#endif
 
   score = lastposition.score;
   nbigboss = lastposition.nbigboss;
@@ -851,7 +906,9 @@ int play()
   terminate = 0; /* No reason to terminate. */
   updates_due = 0;
   subtick = 0;
-   
+#ifdef LASTBEER_AUTOMATION
+  TEST_STAGE("playing");
+#endif
   do {
     next_attack:
     if (nattacks != 0 && count == attack->count) {
@@ -896,6 +953,17 @@ int play()
         waitforsubtick ();
 
         updatescreen();
+#ifdef LASTBEER_AUTOMATION
+        {
+          int test_shots = 0;
+          if (test_crossing_slot >= 0 && _foe[test_crossing_slot].object >= 0 &&
+              _foe[test_crossing_slot].flags == FOE_LINE)
+            compat_test_hard_progress(_obj[_foe[test_crossing_slot].object].x);
+          for (int test_i = 0; test_i < MAXSHOTS; ++test_i)
+            if (_shot[test_i].object != -1) ++test_shots;
+          TEST_FRAME(_arm[0].object >= 0 ? _obj[_arm[0].object].x : -1, test_shots);
+        }
+#endif
         if (terminate != 2)
           keyboard();
     
@@ -925,6 +993,13 @@ int play()
 
     a_expl();
 
+#ifdef LASTBEER_SDL
+    if (game_difficulty == DIFFICULTY_HARD && !terminate && --hard_spawn_timer <= 0) {
+      spawn_hard_crossing();
+      hard_spawn_timer = GAMESPEED * 7 + rand() % (GAMESPEED * 7);
+    }
+#endif
+
     count += frameinc; /* Inrement frame count. */
     if (invincible) invincible--;
   } while ((invincible != 0) || terminate == 0);
@@ -938,4 +1013,3 @@ int play()
   }
 
 }
-

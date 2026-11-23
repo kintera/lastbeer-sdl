@@ -177,6 +177,9 @@ void intro(void)
       c = 0; l = 0;
 
       clear_keybuf();
+#ifdef LASTBEER_AUTOMATION
+      TEST_STAGE("intro");
+#endif
       do {
 	 putpaper(text[c], l, paper);
 	 if (++l > 4) { l = 0; c++; }

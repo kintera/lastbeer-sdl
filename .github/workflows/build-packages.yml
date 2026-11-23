@@ -86,6 +86,7 @@ jobs:
           cp build-windows/beer-sdl-automation.exe "$temp/sdl/x86_64-w64-mingw32/bin/SDL3.dll" BEER.DAT "$temp/portable-game/"
           cd "$temp"
           SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy APPDATA="$(cygpath -w "$temp/portable-user")" LASTBEER_TEST_SCORE_ENTRY=easy LASTBEER_TEST_SCORE_RANK=first "$temp/portable-game/beer-sdl-automation.exe"
+          SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy APPDATA="$(cygpath -w "$temp/portable-user")" LASTBEER_TEST_PLAY_DIFFICULTY=easy "$temp/portable-game/beer-sdl-automation.exe"
       - name: Package Windows ZIP
         run: |
           temp=$(cygpath -u "$RUNNER_TEMP")

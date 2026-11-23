@@ -259,7 +259,7 @@ void save_preferences() {
         << ' ' << preferences.window_width << ' ' << preferences.window_height << ' ' << preferences.font_style << ' ' << preferences.text_color << '\n';
     for (const auto &b : preferences.bindings) out << b.primary << ' ' << b.secondary << '\n';
     out.close();
-    if (!out || std::rename(tmp.c_str(), path.c_str()) != 0)
+    if (!out || !SDL_RenamePath(tmp.c_str(), path.c_str()))
         std::fprintf(stderr, "Could not save platform settings.\n");
 }
 void apply_window_size() {

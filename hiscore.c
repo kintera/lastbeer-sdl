@@ -6,6 +6,9 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
+#ifndef O_BINARY
+# define O_BINARY 0
+#endif
 #define	MAXENTRIES	8
 #define	NOCP		15	// Number of Chars playername
 #define	NOCW		33	// Number of Chars winnertext
@@ -238,7 +241,7 @@ int compat_test_score_entry(int difficulty)
    const char *rank = getenv("LASTBEER_TEST_SCORE_RANK");
    int second = rank && strcmp(rank, "second") == 0;
    int no_entry = rank && strcmp(rank, "none") == 0;
-   int fd = path ? open(path, O_RDONLY) : -1;
+   int fd = path ? open(path, O_RDONLY | O_BINARY) : -1;
    int ok = 0;
    if (fd < 0) return 0;
    memset(&classic_scores, 0, sizeof(classic_scores));

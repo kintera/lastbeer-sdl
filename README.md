@@ -2,7 +2,7 @@
 
 A modernized port of Alpha-Helix's wonderfully strange 1993 beer-themed arcade shooter. Fly the Eichhof bottle through waves of hostile drinks, buy weapons between levels, and try to make the high-score table.
 
-This fork builds on [kilobyte/lastbeer](https://github.com/kilobyte/lastbeer), Gavin Smith's Allegro port, and keeps the original game's art, sounds and gameplay at its heart. The SDL3 version is a work in progress; it has not yet been fully played through or compared with the original game.
+This fork builds on [kilobyte/lastbeer](https://github.com/kilobyte/lastbeer), Gavin Smith's Allegro port, and keeps the original game's art, sounds and gameplay at its heart.
 
 ![Main menu with the original squirrel artwork and rainbow lettering](docs/screenshots/main-menu.png)
 

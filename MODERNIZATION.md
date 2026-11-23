@@ -3,8 +3,7 @@
 The experimental SDL build runs the original C gameplay through a temporary
 C++ compatibility layer. It uses SDL 3 for its window, indexed-color display,
 keyboard, controller, timing and audio, and reads the original `BEER.DAT`. The legacy
-Allegro 4 build remains available. This is an early test build: it has not yet
-been played through or compared comprehensively with the original.
+Allegro 4 build remains available.
 
 ## Build and run
 

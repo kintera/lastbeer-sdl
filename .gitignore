@@ -21,3 +21,4 @@ beer
 # CMake build directories
 /build/
 /build-*/
+/dist/

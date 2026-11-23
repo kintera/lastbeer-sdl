@@ -23,6 +23,10 @@
 
 #include "fileman.h"
 
+#ifdef LASTBEER_SDL
+/* SDL owns this path and returns the directory containing the executable. */
+const char *compat_executable_directory(void);
+#endif
 #define TRUE		1
 #define FALSE		0
 
@@ -290,6 +294,18 @@ void *opendatabase(char *file)
    long archive_size;
    char *fullpath = malloc(strlen(DATADIR) + strlen(file) + 2);
 
+#ifdef LASTBEER_SDL
+   const char *base = compat_executable_directory();
+   if (base) {
+      char *adjacent = malloc(strlen(base) + strlen(file) + 1);
+      if (adjacent) {
+         sprintf(adjacent, "%s%s", base, file);
+         filvar = fopen(adjacent, "rb");
+         free(adjacent);
+         if (filvar) { free(fullpath); goto archive_opened; }
+      }
+   }
+#endif
    if (!fullpath) {
       (*error)("opendatabase", ENOMEM);
       return NULL;
@@ -303,6 +319,9 @@ void *opendatabase(char *file)
       return NULL;
    }
 
+#ifdef LASTBEER_SDL
+archive_opened:
+#endif
    if (fseek(filvar, 0, SEEK_END) != 0 || (archive_size = ftell(filvar)) < 0 ||
        fseek(filvar, 0, SEEK_SET) != 0 ||
        fread(header, 1, sizeof(header), filvar) != sizeof(header)) {
@@ -584,4 +603,3 @@ void closefile(FILE *filvar)
 {
    fclose(filvar);
 }
-

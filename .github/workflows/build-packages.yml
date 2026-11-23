@@ -1,0 +1,97 @@
+name: Build packages
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxkbcommon-dev libwayland-dev wayland-protocols libasound2-dev libpulse-dev libudev-dev libegl1-mesa-dev libgl1-mesa-dev
+      - name: Build SDL3
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/sdl.tar.gz" https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-3.4.16.tar.gz
+          echo '7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68  '"$RUNNER_TEMP/sdl.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/sdl-src"
+          tar -xzf "$RUNNER_TEMP/sdl.tar.gz" -C "$RUNNER_TEMP/sdl-src" --strip-components=1
+          cmake -S "$RUNNER_TEMP/sdl-src" -B "$RUNNER_TEMP/sdl-build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl-install" -DSDL_TESTS=OFF -DSDL_STATIC=OFF
+          cmake --build "$RUNNER_TEMP/sdl-build"
+          cmake --install "$RUNNER_TEMP/sdl-build"
+      - name: Build and test game
+        run: |
+          cmake -S . -B build-sdl -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/sdl-install" -DLASTBEER_DATA_DIR=/nonexistent/lastbeer
+          cmake --build build-sdl
+          cp BEER.DAT build-sdl/
+          ctest --test-dir build-sdl --output-on-failure -j 2
+      - name: Verify relocatable data lookup
+        run: |
+          mkdir "$RUNNER_TEMP/portable-game"
+          cp build-sdl/beer-sdl-automation BEER.DAT "$RUNNER_TEMP/portable-game/"
+          cd "$RUNNER_TEMP"
+          SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy XDG_DATA_HOME="$RUNNER_TEMP/portable-user" LASTBEER_TEST_SCORE_ENTRY=easy LASTBEER_TEST_SCORE_RANK=first "$RUNNER_TEMP/portable-game/beer-sdl-automation"
+      - name: Package AppImage
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/appimagetool" https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          echo 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  '"$RUNNER_TEMP/appimagetool" | sha256sum -c -
+          curl -fsSLo "$RUNNER_TEMP/appimage-runtime" https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          echo '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  '"$RUNNER_TEMP/appimage-runtime" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          APPIMAGETOOL="$RUNNER_TEMP/appimagetool" APPIMAGE_RUNTIME="$RUNNER_TEMP/appimage-runtime" packaging/linux/build-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LastEichhof-Linux-x86_64-AppImage
+          path: dist/LastEichhof-x86_64.AppImage
+          if-no-files-found: error
+
+  windows-zip:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            curl
+            tar
+      - name: Download SDL3 development package
+        run: |
+          temp=$(cygpath -u "$RUNNER_TEMP")
+          curl -fsSLo "$temp/sdl-mingw.tar.gz" https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-devel-3.4.16-mingw.tar.gz
+          echo 'c7ef65bd72eabac6e5b535411dbd8d5824d0aab24fd62ff8812666b336f18a9c  '"$temp/sdl-mingw.tar.gz" | sha256sum -c -
+          mkdir -p "$temp/sdl"
+          tar -xzf "$temp/sdl-mingw.tar.gz" -C "$temp/sdl" --strip-components=1
+      - name: Build and verify Windows game
+        run: |
+          temp=$(cygpath -u "$RUNNER_TEMP")
+          sdl_cmake=$(cygpath -m "$temp/sdl/x86_64-w64-mingw32/lib/cmake/SDL3")
+          cmake -S . -B build-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS=-static -DSDL3_DIR="$sdl_cmake" -DLASTBEER_DATA_DIR=Z:/nonexistent/lastbeer
+          cmake --build build-windows
+          mkdir -p "$temp/portable-game" "$temp/portable-user"
+          cp build-windows/beer-sdl-automation.exe "$temp/sdl/x86_64-w64-mingw32/bin/SDL3.dll" BEER.DAT "$temp/portable-game/"
+          cd "$temp"
+          SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy APPDATA="$(cygpath -w "$temp/portable-user")" LASTBEER_TEST_SCORE_ENTRY=easy LASTBEER_TEST_SCORE_RANK=first "$temp/portable-game/beer-sdl-automation.exe"
+      - name: Package Windows ZIP
+        run: |
+          temp=$(cygpath -u "$RUNNER_TEMP")
+          SDL3_DLL="$temp/sdl/x86_64-w64-mingw32/bin/SDL3.dll" packaging/windows/build-zip.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LastEichhof-Windows-x86_64
+          path: dist/LastEichhof-Windows-x86_64.zip
+          if-no-files-found: error

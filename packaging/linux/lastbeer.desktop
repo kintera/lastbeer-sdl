@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=The Last Eichhof
+Comment=A beer-themed arcade shooter
+Exec=beer-sdl
+Icon=lastbeer
+Categories=Game;ArcadeGame;
+Terminal=false

@@ -157,8 +157,8 @@ cmake --build build-legacy
 ./build-legacy/beer
 ```
 
-The original Autotools build remains available. See `README` and `LICENSE.GPL`
-for the original instructions and licensing.
+The original Autotools build remains available. See [README.md](README.md) and
+[LICENSE.GPL](LICENSE.GPL) for credits and licensing.
 
 ## Direction
 

@@ -12,7 +12,7 @@ beer_SOURCES = fileman.c fileman.h xmode.h xmodeasm.c xmodec.c \
 
 dist_data_DATA = BEER.DAT
 
-EXTRA_DIST = README LICENSE.GPL
+EXTRA_DIST = README.md LICENSE.GPL
 
 beer_CFLAGS = `allegro-config --cflags`
 beer_LDFLAGS = `allegro-config --libs`

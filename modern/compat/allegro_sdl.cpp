@@ -481,6 +481,7 @@ void install_int_ex(void (*callback)(void), int rate) {
 void set_leds(int) {}
 uint64_t compat_ticks(void) { return SDL_GetTicks(); }
 void compat_set_executable(const char *path) { executable_path = path ? path : ""; }
+const char *compat_executable_directory(void) { return SDL_GetBasePath(); }
 int compat_audio_probe_process(void) {
 #ifdef LASTBEER_AUTOMATION
     if (std::getenv("LASTBEER_TEST_AUDIO_HANG")) SDL_Delay(5000);

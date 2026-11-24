@@ -21,7 +21,7 @@ cp -L "$sdl" "$appdir/usr/lib/libSDL3.so.0"
 cp "$root/packaging/linux/AppRun" "$appdir/AppRun"
 chmod +x "$appdir/AppRun" "$appdir/usr/bin/beer-sdl"
 cp "$root/packaging/linux/lastbeer.desktop" "$appdir/lastbeer.desktop"
-cp "$root/packaging/linux/lastbeer.svg" "$appdir/lastbeer.svg"
+cp "$root/packaging/icons/lastbeer.png" "$appdir/lastbeer.png"
 cp "$root/README.md" "$root/LICENSE.GPL" "$root/packaging/SDL3-LICENSE.txt" "$appdir/usr/share/licenses/lastbeer/"
 if [ -n "${APPIMAGE_RUNTIME:-}" ]; then
    ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$tool" --runtime-file "$APPIMAGE_RUNTIME" "$appdir" "$output"

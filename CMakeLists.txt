@@ -59,6 +59,11 @@ if(LASTBEER_BUILD_SDL)
     gameasm.c support.c gameplay.c shop.c menu.c baller.c hiscore.c intro.c
     modern/difficulty.c modern/compat/allegro_sdl.cpp)
   add_executable(beer-sdl ${LASTBEER_GAME_SOURCES})
+  if(WIN32)
+    enable_language(RC)
+    configure_file(packaging/windows/icon.rc.in "${CMAKE_CURRENT_BINARY_DIR}/lastbeer-icon.rc" @ONLY)
+    target_sources(beer-sdl PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/lastbeer-icon.rc")
+  endif()
   target_include_directories(beer-sdl BEFORE PRIVATE modern/compat)
   target_compile_definitions(beer-sdl PRIVATE LASTBEER_SDL
     DATADIR="${LASTBEER_DATA_DIR}" LOCALSTATEDIR="${CMAKE_INSTALL_FULL_LOCALSTATEDIR}")

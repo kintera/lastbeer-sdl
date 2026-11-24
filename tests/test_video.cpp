@@ -39,6 +39,14 @@ int main() {
           scaled[3 * 6 + 2] == 0 && scaled[3 * 6 + 3] == 0,
           "Scale2x did not smooth the corner as expected");
     lastbeer::Video video("display test", 640, 480, 2);
+    auto *icon = lastbeer::make_window_icon_surface();
+    Uint8 ir = 0, ig = 0, ib = 0, ia = 0;
+    check(icon && icon->w == 128 && icon->h == 128 &&
+          SDL_ReadSurfacePixel(icon, 0, 0, &ir, &ig, &ib, &ia) && ia == 0 &&
+          SDL_ReadSurfacePixel(icon, 64, 64, &ir, &ig, &ib, &ia) &&
+          ir == 151 && ig == 17 && ib == 4 && ia == 253,
+          "window icon pixels or transparency are incorrect");
+    SDL_DestroySurface(icon);
     auto *cursor = lastbeer::make_beer_cursor_surface();
     Uint8 cr = 0, cg = 0, cb = 0, ca = 0;
     check(cursor && cursor->w == 32 && cursor->h == 40 &&

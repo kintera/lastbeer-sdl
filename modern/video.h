@@ -13,6 +13,7 @@ void scale2x(std::span<const std::uint32_t> input, int width, int height,
              std::span<std::uint32_t> output);
 std::vector<std::pair<int, int>> window_sizes_for_display(int width, int height);
 SDL_Surface *make_beer_cursor_surface(); // Caller owns the returned surface.
+SDL_Surface *make_window_icon_surface(); // Caller owns the returned surface.
 // Owns one SDL window and displays indexed pixels with a mutable palette.
 // All calls, including construction/destruction, must be on the SDL main thread.
 class Video {

@@ -1,14 +1,24 @@
 #include "video.h"
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
 #include <string>
+#include "window_icon_rgba.h"
 
 namespace lastbeer {
 namespace {
 std::runtime_error sdl_error(const char *what) {
     return std::runtime_error(std::string(what) + ": " + SDL_GetError());
 }
+}
+SDL_Surface *make_window_icon_surface() {
+    auto *surface = SDL_CreateSurface(128, 128, SDL_PIXELFORMAT_RGBA32);
+    if (!surface) return nullptr;
+    for (int y = 0; y < 128; ++y)
+        std::memcpy(static_cast<unsigned char *>(surface->pixels) + y * surface->pitch,
+                    lastbeer_window_icon_rgba + y * 128 * 4, 128 * 4);
+    return surface;
 }
 void scale2x(std::span<const std::uint32_t> input, int width, int height,
              std::span<std::uint32_t> output) {
@@ -67,6 +77,10 @@ Video::Video(const char *title, int width, int height, int scale, bool automatic
         initial_window_height_ = window_height;
         window_ = SDL_CreateWindow(title, window_width, window_height, SDL_WINDOW_RESIZABLE);
         if (!window_) throw sdl_error("Cannot create window");
+        if (auto *icon = make_window_icon_surface()) {
+            SDL_SetWindowIcon(window_, icon);
+            SDL_DestroySurface(icon);
+        }
         renderer_ = SDL_CreateRenderer(window_, nullptr);
         if (!renderer_) throw sdl_error("Cannot create renderer");
         if (!SDL_SetRenderLogicalPresentation(renderer_, width, height, SDL_LOGICAL_PRESENTATION_LETTERBOX))

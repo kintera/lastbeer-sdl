@@ -116,7 +116,11 @@ struct explstrc {
 
 #define MAXARMS			7
 #define MAXFOES			26
+#ifdef LASTBEER_SDL
+#define MAXSHOTS                128
+#else
 #define MAXSHOTS		30
+#endif
 #define MAXEXPLS		8
 
 #define WIN_CTIME		100	// # of frames game will continue

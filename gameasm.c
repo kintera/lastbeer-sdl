@@ -93,7 +93,12 @@ int defshot (int shot, int x, int y, struct anishot *addr)
   } while (--ctr);
 
   /* If empty slot not found */
-  if (ptr - (struct anishot *) &_shot == MAXSHOTS) return -1;
+  if (ptr - (struct anishot *) &_shot == MAXSHOTS) {
+#ifdef LASTBEER_AUTOMATION
+    compat_test_shot_failure();
+#endif
+    return -1;
+  }
 
   /* Really don't know why we do this. Only done when shots are releasing
      other shots. */
@@ -114,8 +119,12 @@ int defshot (int shot, int x, int y, struct anishot *addr)
 #endif
   ptr->speed = ss->speed;
 
-  return ptr->object = defobject(intindex[ss->sprite],
-                           x + ss->shotx, y + ss->shoty, OBJ_LOW);
+  ptr->object = defobject(intindex[ss->sprite],
+                          x + ss->shotx, y + ss->shoty, OBJ_LOW);
+#ifdef LASTBEER_AUTOMATION
+  if (ptr->object < 0) compat_test_shot_failure();
+#endif
+  return ptr->object;
 
 }
 

@@ -10,11 +10,11 @@ This fork builds on [kilobyte/lastbeer](https://github.com/kilobyte/lastbeer), G
 
 ## What's new
 
-- **One resizable window** throughout the game, with fullscreen and a consistent 4:3 game view.
+- **One resizable window** throughout the game, with fullscreen, a consistent 4:3 game view, and pixel-art beer glasses in the fullscreen sidebars.
 - **Keyboard and gamepad support**, including controller selection, remappable controls and menu navigation.
 - **Video settings** for display size, pixel/linear/Scale2x filters, scaling, scanlines, vertical sync, brightness and contrast.
 - **Easy, Classic and Hard** selectable when starting a game, with separate high-score tables for each difficulty.
-- **A refreshed menu** with the original artwork, an animated pointer, and selectable classic, bold or title-style fonts with white or rainbow text.
+- **A refreshed menu** with the original artwork, an animated pointer, arcade-style sound effects, and selectable classic, bold or title-style fonts with white or rainbow text. Menu sounds follow the Sound setting.
 - **SDL3 audio and screenshots**, plus fixes for projectile cleanup and high-score entry.
 
 Classic uses the existing movement and damage rules. Easy increases movement speed and weapon damage; Hard slows movement, reduces weapon damage and occasionally adds an enemy crossing the top of the screen. The selection stays fixed for the whole run.
@@ -45,6 +45,13 @@ ctest --test-dir build-sdl --output-on-failure
 
 The game looks for `BEER.DAT` next to the executable, then in the configured data directory or current directory. Run `beer-sdl --no-sound` to bypass audio initialization. See [MODERNIZATION.md](MODERNIZATION.md) for detailed settings, build notes and the status of the port.
 
+To reset all three high-score tables to fresh randomized defaults while keeping your other settings, run the game with `--reset-highscores`:
+
+- **Windows:** In PowerShell, open the extracted `LastEichhof` folder and run `.\beer-sdl.exe --reset-highscores`.
+- **Linux AppImage:** Run `./LastEichhof-x86_64.AppImage --reset-highscores`.
+
+Existing high scores are otherwise preserved when updating the game.
+
 ## Controls
 
 | Action | Keyboard | Controller |
@@ -62,7 +69,7 @@ Use the beer-mug pointer to select main-menu and Options rows. The pointer is vi
 
 In the between-level shop, move the pointer over an item, the menu card, or the exit to highlight it; click to select it. Click inside the placement box to position a weapon. Easy doubles both level money bonuses and the money earned from points at the shop; Classic and Hard use the same payouts.
 
-Mouse selection works in menus, the shop, and high scores in every input mode. On score entry, type directly or use left/right arrows to choose a character position and up/down to change its letter. You can also click letters along the bottom, click a character position to edit it, and click DONE to submit. On the score table, click the arrows to change difficulty or BACK to leave.
+Mouse selection works in menus, the shop, and high scores in every input mode. On score entry, type directly or use left/right arrows to choose a character position and up/down to change its letter. Hover over the letters along the bottom to move the highlight, then click a letter to enter it. You can also click a character position to edit it and click DONE to submit. On the score table, click the arrows to change difficulty or BACK to leave.
 
 ## Credits and license
 

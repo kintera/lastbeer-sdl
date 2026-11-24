@@ -29,6 +29,10 @@ extern int key_up, key_down, key_left, key_right, key_fire, key_pause;
 extern int soundon;
 extern int game_difficulty;
 extern int speaker(int state);
+#ifdef LASTBEER_AUTOMATION
+extern long money;
+extern int nweapons;
+#endif
 }
 namespace {
 constexpr int padding = 1024;
@@ -46,6 +50,8 @@ struct AudioAttempt {
 std::shared_ptr<AudioAttempt> audio_attempt;
 std::array<lastbeer::Color, 256> colors{};
 std::map<const SAMPLE *, std::vector<std::uint64_t>> sample_voices;
+// Multiple voices can share one decoded sample without copying its data.
+std::map<const SAMPLE *, std::map<int, std::shared_ptr<const lastbeer::Sound>>> sample_cache;
 struct QueuedKey { int value; bool gamepad; };
 std::deque<QueuedKey> key_queue;
 bool last_key_gamepad = false;
@@ -76,6 +82,8 @@ std::vector<std::uint8_t> frame_pixels;
 std::string executable_path;
 #ifdef LASTBEER_AUTOMATION
 int test_audio_probe_attempts = 0;
+std::array<int, 3> test_menu_sounds{};
+int test_menu_sounds_muted = 0;
 #endif
 void (*timer_callback)() = nullptr;
 std::uint64_t interval_ns = 0, next_tick = 0;
@@ -91,6 +99,8 @@ int test_options = 0, test_input_settings = 0, test_controls = 0, test_bindings 
 int test_controller_select = 0, test_pad_controls = 0, test_pad_bind = 0, test_video_settings = 0;
 int test_menu_styles = 0;
 int test_shop_buy = 0, test_shop_card = 0, test_shop_place = 0, test_shop_sell = 0;
+long test_shop_balance_before_selection = 0;
+int test_shop_weapons_before_selection = 0;
 int test_shop_x1 = 0, test_shop_y1 = 0, test_shop_x2 = 0, test_shop_y2 = 0;
 bool test_shop_hover_sent = false, test_shop_hover_checked = false;
 bool test_shop_leave_sent = false, test_shop_redraw_checked = false;
@@ -99,9 +109,11 @@ int test_frames = 0, test_start_x = -1, test_max_x = -1, test_menus = 0;
 int test_skipped_presentations = 0;
 int test_menu_last_frame = -1, test_menu_animation_changes = 0;
 int test_hard_spawns = 0;
+int test_peak_shots = 0, test_shot_failures = 0;
 int test_hard_start_x = 0, test_hard_direction = 0, test_hard_motion = 0;
 int test_score_views = 0;
 int test_score_name_keys = 0, test_score_winner_keys = 0;
+std::array<int, 2> test_score_hover_events{}, test_score_hover_phase{};
 int test_play_difficulty_steps = 0;
 bool test_score_entry_done = false;
 bool test_saw_shot = false, test_fullscreen_entered = false, test_fullscreen_exited = false;
@@ -130,6 +142,13 @@ void test_mouse_click(int x, int y) {
     SDL_PushEvent(&button);
     button.type = SDL_EVENT_MOUSE_BUTTON_UP; SDL_PushEvent(&button);
 }
+void test_mouse_motion(int x, int y) {
+    int w = 0, h = 0;
+    SDL_GetWindowSize(SDL_GetWindowFromID(video->window_id()), &w, &h);
+    SDL_Event event{}; event.type = SDL_EVENT_MOUSE_MOTION;
+    event.motion.x = float(x * w) / 320; event.motion.y = float(y * h) / 240;
+    SDL_PushEvent(&event);
+}
 void test_pump() {
     auto now = SDL_GetTicks();
     if (test_release_at && now >= test_release_at) {
@@ -152,9 +171,13 @@ void test_pump() {
         const bool mixed_entry = std::getenv("LASTBEER_TEST_SCORE_MIXED") != nullptr;
         const bool mouse_score_view = std::getenv("LASTBEER_TEST_SCORE_MOUSE_VIEW") != nullptr;
         const bool menu_audio = std::getenv("LASTBEER_TEST_MENU_AUDIO") != nullptr;
+        const bool menu_sfx = std::getenv("LASTBEER_TEST_MENU_SFX") != nullptr;
+        const bool sound_overlap = std::getenv("LASTBEER_TEST_SOUND_OVERLAP") != nullptr;
         const bool mouse_test = std::getenv("LASTBEER_TEST_MOUSE") != nullptr;
         const bool mouse_menu_test = std::getenv("LASTBEER_TEST_MOUSE_MENU") != nullptr;
-        const bool shop_test = std::getenv("LASTBEER_TEST_SHOP_MOUSE") != nullptr;
+        const bool shop_cancel = std::getenv("LASTBEER_TEST_SHOP_CANCEL") != nullptr;
+        const bool shop_balance = std::getenv("LASTBEER_TEST_SHOP_BALANCE") != nullptr;
+        const bool shop_test = std::getenv("LASTBEER_TEST_SHOP_MOUSE") != nullptr || shop_cancel || shop_balance;
         const char *closing_test = std::getenv("LASTBEER_TEST_CLOSING");
         const char *play_test = std::getenv("LASTBEER_TEST_PLAY_DIFFICULTY");
         SDL_Scancode code = test_stage == "menu" ? (test_menus == 1 ? SDL_SCANCODE_1 : SDL_SCANCODE_6) : SDL_SCANCODE_SPACE;
@@ -183,6 +206,33 @@ void test_pump() {
         if (closing_test && test_stage == "menu") code = SDL_SCANCODE_6;
         if (shop_test && (test_stage == "shop-buy" || test_stage == "shop-card" ||
                           test_stage == "shop-place" || test_stage == "shop-sell")) {
+            if (shop_balance) {
+                if (test_stage == "shop-buy" && test_shop_buy == 1) test_mouse_click(20, 120);
+                else {
+                    const bool exit = (test_stage == "shop-buy" && test_shop_buy >= 2) ||
+                                      (test_stage == "shop-card" && test_shop_card >= 2);
+                    test_mouse_click(exit ? test_shop_x2 : test_shop_x1, exit ? test_shop_y2 : test_shop_y1);
+                }
+                test_sent = true;
+                return;
+            }
+            if (shop_cancel) {
+                if (test_stage == "shop-place" && (test_shop_place == 1 || test_shop_place == 3)) {
+                    test_key(SDL_SCANCODE_ESCAPE, true);
+                    test_release_key = SDL_SCANCODE_ESCAPE;
+                    test_release_is_pad = false;
+                    test_release_at = now + 80;
+                } else if (test_stage == "shop-buy" && test_shop_buy == 3) {
+                    test_mouse_click(20, 120);
+                } else {
+                    const bool second = (test_stage == "shop-buy" && test_shop_buy >= 4) ||
+                                        (test_stage == "shop-card" && test_shop_card >= 3) ||
+                                        (test_stage == "shop-place" && test_shop_place >= 4);
+                    test_mouse_click(second ? test_shop_x2 : test_shop_x1, second ? test_shop_y2 : test_shop_y1);
+                }
+                test_sent = true;
+                return;
+            }
             if (std::getenv("LASTBEER_TEST_SHOP_HOVER") && test_stage != "shop-place") {
                 if (!test_shop_hover_sent) {
                     int w = 0, h = 0;
@@ -233,11 +283,31 @@ void test_pump() {
             test_sent = true;
             return;
         }
+        if (menu_sfx && test_stage == "options" && (test_options == 1 || test_options == 4)) {
+            test_mouse_click(100, 53);
+            test_sent = true;
+            return;
+        }
         if (mouse_score_view && (test_stage == "menu" || test_stage == "score")) {
             if (test_stage == "menu") test_mouse_click(220, test_menus == 1 ? 73 : 153);
             else test_mouse_click(test_score_views < 3 ? 140 : 240, 185);
             test_sent = true;
             return;
+        }
+        if (entry_test && std::getenv("LASTBEER_TEST_SCORE_HOVER") &&
+            (test_stage == "score-name" || test_stage == "score-winner")) {
+            const int which = test_stage == "score-name" ? 0 : 1;
+            const int step = which == 0 ? test_score_name_keys : test_score_winner_keys;
+            if (step == 1) {
+                auto &phase = test_score_hover_phase[which];
+                if (phase == 0) { test_mouse_motion(28, 232); ++phase; return; }
+                if (phase == 1 && now - test_stage_at >= 400) { test_mouse_motion(36, 232); ++phase; return; }
+                if (phase == 2 && now - test_stage_at >= 550) { test_mouse_motion(319, 210); ++phase; return; }
+                if (phase < 3 || now - test_stage_at < 700) return;
+                if (test_score_hover_events[which] != 2) {
+                    std::fprintf(stderr, "SMOKE: score hover did not follow the pointer\n"); std::exit(1);
+                }
+            }
         }
         if (entry_test && mixed_entry && (test_stage == "score-name" || test_stage == "score-winner")) {
             const int step = test_stage == "score-name" ? test_score_name_keys : test_score_winner_keys;
@@ -309,6 +379,9 @@ void test_pump() {
         }
         else if (entry_test && test_stage == "score-name") code = !std::getenv("LASTBEER_TEST_SCORE_EMPTY") && test_score_name_keys == 1 ? SDL_SCANCODE_A : SDL_SCANCODE_RETURN;
         else if (entry_test && test_stage == "score-winner") code = !std::getenv("LASTBEER_TEST_SCORE_EMPTY") && test_score_winner_keys == 1 ? SDL_SCANCODE_B : SDL_SCANCODE_RETURN;
+        else if (sound_overlap && test_stage == "menu") code = SDL_SCANCODE_6;
+        else if (menu_sfx && test_stage == "menu") code = test_menus == 1 ? SDL_SCANCODE_DOWN : test_menus == 2 ? SDL_SCANCODE_5 : SDL_SCANCODE_6;
+        else if (menu_sfx && test_stage == "options") code = test_options == 2 ? SDL_SCANCODE_DOWN : test_options == 3 ? SDL_SCANCODE_UP : SDL_SCANCODE_ESCAPE;
         else if (menu_audio && test_stage == "menu") code = test_menus == 1 ? SDL_SCANCODE_5 : SDL_SCANCODE_6;
         else if (menu_audio && test_stage == "options") code = test_options <= 2 ? SDL_SCANCODE_RETURN : SDL_SCANCODE_ESCAPE;
         else if (style_test && test_stage == "menu") code = test_menus == 1 ? SDL_SCANCODE_5 : SDL_SCANCODE_6;
@@ -385,7 +458,7 @@ void test_pump() {
         test_release_at = now + 80;
         test_sent = true;
     }
-    if (test_stage == "playing" && test_frames >= 80 && !test_sent) {
+    if (test_stage == "playing" && test_frames >= (std::getenv("LASTBEER_TEST_FULL_FIRE") ? 400 : 80) && !test_sent) {
         if (test_start_x < 0 || test_max_x <= test_start_x || !test_saw_shot ||
             (std::getenv("LASTBEER_TEST_SLOW_RENDER") && test_skipped_presentations == 0) ||
             ((std::getenv("LASTBEER_TEST_HARD_SPAWN") || std::getenv("LASTBEER_TEST_DIFFICULTY_MENU")) &&
@@ -395,6 +468,13 @@ void test_pump() {
             !test_fullscreen_entered || !test_fullscreen_exited || video->window_id() != test_window) {
             std::fprintf(stderr, "SMOKE: gameplay controls/display failed (start=%d max=%d shot=%d fullscreen=%d/%d)\n", test_start_x, test_max_x, test_saw_shot, test_fullscreen_entered, test_fullscreen_exited);
             std::exit(1);
+        }
+        if (std::getenv("LASTBEER_TEST_FULL_FIRE")) {
+            if (test_shot_failures || test_peak_shots <= 30) {
+                std::fprintf(stderr, "SMOKE: full ship fire failed (peak=%d failures=%d)\n", test_peak_shots, test_shot_failures);
+                std::exit(1);
+            }
+            std::fprintf(stderr, "SMOKE: full ship fire peak=%d with no dropped shots\n", test_peak_shots);
         }
         std::fprintf(stderr, "SMOKE: gameplay frames=%d movement=%d shot=%d single-window fullscreen=ok\n", test_frames, test_max_x-test_start_x, test_saw_shot);
         test_key(SDL_SCANCODE_ESCAPE, true);
@@ -852,20 +932,44 @@ int install_sound(int, int, const char *) {
         SDL_Delay(10);
     }
 }
-void remove_sound(void) { sample_voices.clear(); audio.reset(); }
-void compat_stop_all_audio(void) { if (audio) audio->mixer().stop_all(); sample_voices.clear(); }
+void remove_sound(void) { sample_voices.clear(); sample_cache.clear(); audio.reset(); }
+void compat_stop_all_audio(void) { if (audio) audio->mixer().stop_all(); sample_voices.clear(); sample_cache.clear(); }
+void compat_menu_sound(int effect) {
+    if (effect < MENU_SOUND_MOVE || effect > MENU_SOUND_BACK) return;
+    if (!audio || !soundon) {
+#ifdef LASTBEER_AUTOMATION
+        if (std::getenv("LASTBEER_TEST_MENU_SFX")) ++test_menu_sounds_muted;
+#endif
+        return;
+    }
+    try {
+        static const std::array sounds = {
+            std::make_shared<lastbeer::Sound>(lastbeer::make_menu_sound(lastbeer::MenuSound::Move)),
+            std::make_shared<lastbeer::Sound>(lastbeer::make_menu_sound(lastbeer::MenuSound::Select)),
+            std::make_shared<lastbeer::Sound>(lastbeer::make_menu_sound(lastbeer::MenuSound::Back))
+        };
+        audio->mixer().play(sounds[effect]);
+#ifdef LASTBEER_AUTOMATION
+        if (std::getenv("LASTBEER_TEST_MENU_SFX")) ++test_menu_sounds[effect];
+#endif
+    } catch (const std::exception &e) { std::fprintf(stderr, "Menu sound unavailable: %s\n", e.what()); }
+}
 int play_sample(const SAMPLE *sample, int vol, int, int freq, int loop) {
     if (!audio || !sample || !sample->data || !sample->len || sample->bits != 8 || sample->stereo) return -1;
     try {
-        auto sound = std::make_shared<lastbeer::Sound>();
-        sound->sample_rate = int((long long)sample->freq * freq / 1000);
-        sound->priority = sample->priority;
-        auto *p = static_cast<const unsigned char *>(sample->data);
-        sound->samples.reserve(sample->len);
-        for (unsigned long i=0; i < sample->len; ++i) sound->samples.push_back((int(p[i])-128)/128.0f);
         auto &voices = sample_voices[sample];
         std::erase_if(voices, [](auto id) { return !audio->mixer().active(id); });
-        voices.push_back(audio->mixer().play(std::move(sound), loop != 0, std::clamp(vol/255.0f, 0.0f, 1.0f)));
+        auto &sound = sample_cache[sample][freq];
+        if (!sound) {
+            auto decoded = std::make_shared<lastbeer::Sound>();
+            decoded->sample_rate = int((long long)sample->freq * freq / 1000);
+            decoded->priority = sample->priority;
+            auto *p = static_cast<const unsigned char *>(sample->data);
+            decoded->samples.reserve(sample->len);
+            for (unsigned long i=0; i < sample->len; ++i) decoded->samples.push_back((int(p[i])-128)/128.0f);
+            sound = std::move(decoded);
+        }
+        voices.push_back(audio->mixer().play(sound, loop != 0, std::clamp(vol/255.0f, 0.0f, 1.0f)));
         return 0;
     } catch (const std::exception &e) { fail(e.what()); return -1; }
 }
@@ -875,6 +979,7 @@ void stop_sample(const SAMPLE *sample) {
         if (audio) for (auto id : it->second) audio->mixer().stop(id);
         sample_voices.erase(it);
     }
+    sample_cache.erase(sample);
 }
 void set_color_depth(int) {}
 void request_refresh_rate(int) {}
@@ -1322,6 +1427,72 @@ void compat_test_menu_background(BITMAP *art) {
 }
 void compat_test_stage(const char *stage) {
     test_stage = stage;
+    if (test_stage == "intro" && std::getenv("LASTBEER_TEST_SOUND_OVERLAP")) {
+        std::array<unsigned char, 24000> data{};
+        data.fill(160);
+        SAMPLE a{}; a.bits = 8; a.freq = 24000; a.len = data.size(); a.data = data.data();
+        SAMPLE b = a;
+        if (!audio || play_sample(&a, 255, 128, 1000, 1) || sample_voices[&a].size() != 1) {
+            std::fprintf(stderr, "SMOKE: first sample did not play\n"); std::exit(1);
+        }
+        auto first = sample_voices[&a][0];
+        for (int i = 0; i < 3; ++i) {
+            if (play_sample(&a, 255, 128, 1000, 1)) {
+                std::fprintf(stderr, "SMOKE: repeated sample could not play\n"); std::exit(1);
+            }
+        }
+        if (sample_voices[&a].size() != 4 || sample_cache[&a].size() != 1 ||
+            play_sample(&b, 255, 128, 1000, 1) || !audio->mixer().active(sample_voices[&b][0])) {
+            std::fprintf(stderr, "SMOKE: overlapping samples were suppressed\n"); std::exit(1);
+        }
+        const auto copies = sample_voices[&a];
+        for (std::size_t i = 0; i < copies.size(); ++i) {
+            if (!audio->mixer().active(copies[i]) || (i && copies[i] == copies[i - 1])) {
+                std::fprintf(stderr, "SMOKE: repeated sound did not get its own voice\n"); std::exit(1);
+            }
+        }
+        if (play_sample(&a, 255, 128, 800, 1) || sample_cache[&a].size() != 2 ||
+            sample_cache[&a][800]->sample_rate != 19200) {
+            std::fprintf(stderr, "SMOKE: alternate playback rate was not preserved\n"); std::exit(1);
+        }
+        stop_sample(&a);
+        for (auto id : copies) if (audio->mixer().active(id)) {
+            std::fprintf(stderr, "SMOKE: stop left a repeated sample playing\n"); std::exit(1);
+        }
+        if (sample_cache.count(&a) || play_sample(&a, 255, 128, 1000, 1) ||
+            sample_voices[&a].size() != 1 || sample_voices[&a][0] == first ||
+            !audio->mixer().active(sample_voices[&b][0])) {
+            std::fprintf(stderr, "SMOKE: stopped sample did not restart independently\n"); std::exit(1);
+        }
+        stop_sample(&a);
+        stop_sample(&b);
+        SAMPLE c = a; c.len = 2400;
+        if (play_sample(&c, 255, 128, 1000, 0)) {
+            std::fprintf(stderr, "SMOKE: one-shot sample did not play\n"); std::exit(1);
+        }
+        const auto completed = sample_voices[&c][0];
+        const auto deadline = SDL_GetTicks() + 2000;
+        while (audio->mixer().active(completed) && SDL_GetTicks() < deadline) SDL_Delay(10);
+        if (audio->mixer().active(completed) || play_sample(&c, 255, 128, 1000, 0) ||
+            sample_voices[&c].size() != 1 || sample_voices[&c][0] == completed) {
+            std::fprintf(stderr, "SMOKE: completed sample could not play again\n"); std::exit(1);
+        }
+        stop_sample(&c);
+        std::fprintf(stderr, "SMOKE: overlapping sound playback verified\n");
+    }
+    if (std::getenv("LASTBEER_TEST_MENU_SFX")) {
+        if (test_stage == "options" && test_options == 3 &&
+            (soundon || test_menu_sounds_muted < 2 || test_menu_sounds[MENU_SOUND_SELECT] != 2)) {
+            std::fprintf(stderr, "SMOKE: muted menu sounds were played or sound was not disabled\n"); std::exit(1);
+        }
+        if (test_stage == "closing") {
+            if (!soundon || test_menu_sounds[MENU_SOUND_MOVE] < 1 || test_menu_sounds[MENU_SOUND_SELECT] < 4 ||
+                test_menu_sounds[MENU_SOUND_BACK] < 1 || test_menu_sounds_muted < 2) {
+                std::fprintf(stderr, "SMOKE: menu sound effects missing\n"); std::exit(1);
+            }
+            std::fprintf(stderr, "SMOKE: menu sounds and mute verified\n");
+        }
+    }
     if (std::getenv("LASTBEER_TEST_START_CLICK") && test_stage == "playing" && !test_start_click_sent) {
         std::fprintf(stderr, "SMOKE: level start dismissed before mouse click\n"); std::exit(1);
     }
@@ -1369,6 +1540,12 @@ void compat_test_stage(const char *stage) {
             const int name_keys = no_entry ? 0 : empty_entry ? 1 : (pad_entry || keyboard_entry) ? 11 : mixed_entry ? 6 : mouse_entry ? 5 : batch_entry ? 3 : 2;
             if (!test_score_entry_done || test_score_name_keys != name_keys || test_score_winner_keys != winner_keys) {
                 std::fprintf(stderr, "SMOKE: score entry did not return to the menu\n"); std::exit(1);
+            }
+            if (std::getenv("LASTBEER_TEST_SCORE_HOVER")) {
+                if (test_score_hover_events[0] != 2 || test_score_hover_events[1] != 2) {
+                    std::fprintf(stderr, "SMOKE: score hover was not exercised on both entry screens\n"); std::exit(1);
+                }
+                std::fprintf(stderr, "SMOKE: score letter hover verified\n");
             }
         }
     }
@@ -1563,6 +1740,15 @@ void compat_test_capture_menu(int enabled) {
     if (std::getenv("LASTBEER_CAPTURE_MENU")) SDL_SetHint(SDL_HINT_VIDEO_DUMMY_SAVE_FRAMES, enabled ? "1" : "0");
 }
 void compat_test_shop_stage(const char *stage, int x1, int y1, int x2, int y2) {
+    if (std::getenv("LASTBEER_TEST_SHOP_CANCEL")) {
+        if (strcmp(stage, "shop-buy") == 0 || strcmp(stage, "shop-card") == 0) {
+            test_shop_balance_before_selection = money;
+            test_shop_weapons_before_selection = nweapons;
+        } else if (strcmp(stage, "shop-place") == 0 &&
+                   (money != test_shop_balance_before_selection || nweapons != test_shop_weapons_before_selection)) {
+            std::fprintf(stderr, "SMOKE: purchase was charged before placement\n"); std::exit(1);
+        }
+    }
     test_shop_x1 = x1; test_shop_y1 = y1; test_shop_x2 = x2; test_shop_y2 = y2;
     test_shop_hover_sent = false; test_shop_hover_checked = false;
     test_shop_leave_sent = false; test_shop_redraw_checked = false;
@@ -1571,6 +1757,17 @@ void compat_test_shop_stage(const char *stage, int x1, int y1, int x2, int y2) {
     else if (strcmp(stage, "shop-place") == 0) ++test_shop_place;
     else if (strcmp(stage, "shop-sell") == 0) ++test_shop_sell;
     compat_test_stage(stage);
+}
+void compat_test_shop_purchase(long before_money, long after_money, int before_weapons, int after_weapons, int cost, int placed) {
+    const bool expected_placed = test_shop_place == 2 || test_shop_place == 4;
+    if (test_shop_place < 1 || test_shop_place > 4 || cost <= 0 || placed != expected_placed ||
+        after_money != before_money - (placed ? cost : 0) ||
+        after_weapons != before_weapons + (placed ? 1 : 0)) {
+        std::fprintf(stderr, "SMOKE: shop purchase/cancel failed (step=%d placed=%d money=%ld/%ld weapons=%d/%d cost=%d)\n",
+                     test_shop_place, placed, before_money, after_money, before_weapons, after_weapons, cost);
+        std::exit(1);
+    }
+    if (test_shop_place == 4) std::fprintf(stderr, "SMOKE: shop cancellation and purchases verified\n");
 }
 void compat_test_shop_hover(int target, int selected, int fired) {
     if (!std::getenv("LASTBEER_TEST_SHOP_HOVER") || !test_shop_hover_sent) return;
@@ -1584,6 +1781,13 @@ void compat_test_shop_exit_redraw(void) {
         test_shop_redraw_checked = true;
         std::fprintf(stderr, "SMOKE: exit sign restored on both pages\n");
     }
+}
+void compat_test_score_hover(int index) {
+    const int which = test_stage == "score-name" ? 0 : test_stage == "score-winner" ? 1 : -1;
+    if (which < 0 || index != 3 + test_score_hover_events[which] || test_score_hover_events[which] >= 2) {
+        std::fprintf(stderr, "SMOKE: wrong score letter hovered\n"); std::exit(1);
+    }
+    ++test_score_hover_events[which];
 }
 void compat_test_closing_result(int reason, uint64_t elapsed) {
     const char *mode = std::getenv("LASTBEER_TEST_CLOSING");
@@ -1599,6 +1803,7 @@ void compat_test_closing_result(int reason, uint64_t elapsed) {
 }
 void compat_test_frame(int ship_x, int active_shots) {
     ++test_frames;
+    test_peak_shots = std::max(test_peak_shots, active_shots);
     if (test_start_x < 0 && ship_x >= 0) test_start_x = ship_x;
     if (ship_x > test_max_x) test_max_x = ship_x;
     if (active_shots > 0) test_saw_shot = true;
@@ -1612,8 +1817,12 @@ void compat_test_frame(int ship_x, int active_shots) {
         else if (std::getenv("LASTBEER_TEST_PAD") || (std::getenv("LASTBEER_TEST_SHOP_MODE") && preferences.input_mode == 2)) {
             test_pad(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true); test_pad(SDL_GAMEPAD_BUTTON_SOUTH, true);
         }
-        else { test_key(SDL_SCANCODE_RIGHT, true); test_key(SDL_SCANCODE_SPACE, true); }
+        else {
+            test_key(SDL_SCANCODE_RIGHT, true);
+            if (!std::getenv("LASTBEER_TEST_FULL_FIRE")) test_key(SDL_SCANCODE_SPACE, true);
+        }
     }
+    if (test_frames == 20 && std::getenv("LASTBEER_TEST_FULL_FIRE")) test_key(SDL_SCANCODE_SPACE, true);
     if (test_frames == 35) {
         if (std::getenv("LASTBEER_TEST_MOUSE")) {
             SDL_Event button{}; button.type = SDL_EVENT_MOUSE_BUTTON_UP; button.button.button = SDL_BUTTON_LEFT; SDL_PushEvent(&button);
@@ -1621,8 +1830,12 @@ void compat_test_frame(int ship_x, int active_shots) {
         else if (std::getenv("LASTBEER_TEST_PAD") || (std::getenv("LASTBEER_TEST_SHOP_MODE") && preferences.input_mode == 2)) {
             test_pad(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, false); test_pad(SDL_GAMEPAD_BUTTON_SOUTH, false);
         }
-        else { test_key(SDL_SCANCODE_RIGHT, false); test_key(SDL_SCANCODE_SPACE, false); }
+        else {
+            test_key(SDL_SCANCODE_RIGHT, false);
+            if (!std::getenv("LASTBEER_TEST_FULL_FIRE")) test_key(SDL_SCANCODE_SPACE, false);
+        }
     }
+    if (test_frames == 350 && std::getenv("LASTBEER_TEST_FULL_FIRE")) test_key(SDL_SCANCODE_SPACE, false);
     if (test_frames == 40 || test_frames == 50) test_key(SDL_SCANCODE_F11, true);
     if (test_frames == 42 || test_frames == 52) test_key(SDL_SCANCODE_F11, false);
     if (test_frames == 42) test_fullscreen_entered = video->fullscreen();
@@ -1631,6 +1844,9 @@ void compat_test_frame(int ship_x, int active_shots) {
         if (test_frames == 79) SDL_SetHint(SDL_HINT_VIDEO_DUMMY_SAVE_FRAMES, "1");
         if (test_frames == 80) SDL_SetHint(SDL_HINT_VIDEO_DUMMY_SAVE_FRAMES, "0");
     }
+}
+void compat_test_shot_failure(void) {
+    if (std::getenv("LASTBEER_TEST_FULL_FIRE")) ++test_shot_failures;
 }
 #endif
 }

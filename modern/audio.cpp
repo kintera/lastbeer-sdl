@@ -6,8 +6,9 @@
 #include <string>
 
 namespace lastbeer {
-Mixer::Mixer(int output_rate) : output_rate_(output_rate) {
+Mixer::Mixer(int output_rate) : output_rate_(output_rate), limiter_release_(0.0f) {
     if (output_rate <= 0) throw std::invalid_argument("Invalid audio output rate");
+    limiter_release_ = 1.0f - std::exp(-1.0f / (0.15f * output_rate));
 }
 std::uint64_t Mixer::play(std::shared_ptr<const Sound> sound, bool loop, float volume) {
     if (!sound || sound->sample_rate <= 0 || sound->samples.empty() || !std::isfinite(volume) || volume < 0 || volume > 1)
@@ -25,6 +26,7 @@ void Mixer::stop(std::uint64_t id) {
 void Mixer::stop_all() {
     std::lock_guard lock(mutex_);
     voices_.clear();
+    limiter_gain_ = 1.0f;
 }
 bool Mixer::active(std::uint64_t id) const {
     std::lock_guard lock(mutex_);
@@ -46,7 +48,14 @@ void Mixer::mix(std::span<float> output) {
         }
     }
     std::erase_if(voices_, [](const Voice &v) { return !v.loop && v.position >= v.sound->samples.size(); });
-    for (auto &sample : output) sample = std::clamp(sample, -1.0f, 1.0f);
+    for (auto &sample : output) {
+        // Preserve ordinary playback volume, but reduce gain on peaks that
+        // would clip when sounds overlap. Recover gradually.
+        limiter_gain_ += (1.0f - limiter_gain_) * limiter_release_;
+        const float magnitude = std::abs(sample);
+        if (magnitude > 1.0f) limiter_gain_ = std::min(limiter_gain_, 0.98f / magnitude);
+        sample = std::clamp(sample * limiter_gain_, -1.0f, 1.0f);
+    }
 }
 AudioDevice::AudioDevice() {
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO))

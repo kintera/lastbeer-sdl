@@ -173,6 +173,10 @@ void free_SAMPLE (SAMPLE *sample)
 {
   struct game_sample *owned = (struct game_sample *)sample;
   if (!owned) return;
+#ifdef LASTBEER_SDL
+  /* Remove the sample's playback identity before this address can be reused. */
+  stop_sample(sample);
+#endif
   free(owned->decoded);
   free(owned);
 }

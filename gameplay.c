@@ -240,6 +240,18 @@ static void newgame(void)
   nweapons = 1;				// First we have 1 weapon.
   weaponlst[0].dx = weaponlst[0].dy = 0;       // At origin (0,0).
   weaponlst[0].arm = weapon.arm[0];
+#ifdef LASTBEER_AUTOMATION
+  if (getenv("LASTBEER_TEST_FULL_FIRE")) {
+    /* Six fast-firing Pony bottles release secondary shots too. */
+    cheatlevel |= CHEATCRASH;
+    nweapons = MAXARMS;
+    for (i = 1; i < MAXARMS; ++i) {
+      weaponlst[i].dx = (i - 3) * 14;
+      weaponlst[i].dy = 20;
+      weaponlst[i].arm = weapon.arm[2];
+    }
+  }
+#endif
 
 /*
 // level 1: Weapon definition during level design.
@@ -608,6 +620,21 @@ void playthegame(void)
             if (nweapons != 2) { fprintf(stderr, "SMOKE: mouse selling failed\n"); exit(1); }
             cheatlevel = saved_cheats;
             fprintf(stderr, "SMOKE: mouse shop purchase placement and selling\n");
+         }
+         else if (getenv("LASTBEER_TEST_SHOP_CANCEL")) {
+            int saved_cheats = cheatlevel;
+            cheatlevel &= ~CHEATMONEY;
+            money = 100000;
+            weaponmanager();
+            cheatlevel = saved_cheats;
+         }
+         else if (getenv("LASTBEER_TEST_SHOP_BALANCE")) {
+            int saved_cheats = cheatlevel;
+            cheatlevel &= ~CHEATMONEY;
+            money = 1000;
+            scoreold = score;
+            weaponmanager();
+            cheatlevel = saved_cheats;
          }
 #endif
       } while (!feedback && (lifes > 0));

@@ -21,7 +21,11 @@
 
 
 #define MAXSPRITES		60
+#ifdef LASTBEER_SDL
+#define MAXOBJS                 192
+#else
 #define MAXOBJS			60
+#endif
 
 #define OBJ_ONECYCLE		0x01	// Destroy object after a cycle.
 #define OBJ_HIGH		0x02	// High priority.
@@ -264,4 +268,3 @@ extern int         backgrndcolor;	// Background is black.
 extern PALETTE           palette;	// Palette currently in use.
 
 #endif
-

@@ -1,5 +1,6 @@
 #include "video.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -19,6 +20,95 @@ SDL_Surface *make_window_icon_surface() {
         std::memcpy(static_cast<unsigned char *>(surface->pixels) + y * surface->pitch,
                     lastbeer_window_icon_rgba + y * 128 * 4, 128 * 4);
     return surface;
+}
+SDL_Surface *make_beer_sidebar_surface() {
+    auto *surface = SDL_CreateSurface(48, 160, SDL_PIXELFORMAT_RGBA32);
+    if (!surface) return nullptr;
+    const auto box = [surface](int x, int y, int w, int h, Uint8 r, Uint8 g, Uint8 b) {
+        SDL_Rect rect{x, y, w, h};
+        return SDL_FillSurfaceRect(surface, &rect, SDL_MapSurfaceRGBA(surface, r, g, b, 255));
+    };
+    bool ok = box(0, 0, 48, 160, 0, 0, 0);
+    // Brass trim frames a large, deliberately blocky beer mug.
+    ok &= box(0, 0, 2, 160, 81, 42, 14) && box(2, 0, 1, 160, 165, 96, 23);
+    ok &= box(45, 0, 1, 160, 165, 96, 23) && box(46, 0, 2, 160, 81, 42, 14);
+    for (int y = 8; y < 160; y += 16) {
+        ok &= box(4, y, 2, 2, 126, 74, 20) && box(42, y, 2, 2, 126, 74, 20);
+    }
+    // Mug handle, drawn before the glass so it sits behind the body.
+    ok &= box(33, 64, 9, 45, 7, 5, 4) && box(35, 67, 7, 39, 147, 78, 15);
+    ok &= box(37, 70, 5, 33, 247, 178, 54) && box(37, 74, 3, 25, 0, 0, 0);
+    // Glass outline, amber beer, rim and base.
+    ok &= box(5, 54, 31, 75, 8, 6, 5) && box(7, 56, 27, 70, 249, 203, 99);
+    ok &= box(9, 60, 23, 63, 179, 83, 8) && box(11, 60, 19, 59, 232, 143, 16);
+    ok &= box(12, 64, 3, 50, 255, 194, 56) && box(28, 60, 3, 58, 201, 105, 8);
+    ok &= box(9, 118, 23, 5, 241, 165, 35) && box(6, 125, 29, 5, 10, 7, 5);
+    ok &= box(4, 130, 33, 5, 8, 6, 5) && box(6, 130, 29, 3, 241, 180, 71);
+    // Foam has a stepped silhouette and darker cream shadows.
+    ok &= box(7, 48, 27, 13, 9, 6, 5) && box(9, 43, 8, 12, 9, 6, 5);
+    ok &= box(15, 39, 12, 16, 9, 6, 5) && box(25, 44, 8, 12, 9, 6, 5);
+    ok &= box(9, 49, 23, 10, 255, 236, 175) && box(11, 44, 7, 8, 255, 247, 210);
+    ok &= box(17, 41, 9, 10, 255, 247, 210) && box(25, 46, 6, 8, 255, 247, 210);
+    ok &= box(10, 55, 21, 4, 229, 192, 123) && box(13, 52, 4, 3, 255, 250, 221);
+    // Bubbles and small highlights.
+    for (const auto &[x, y] : {std::pair{18, 69}, std::pair{24, 77}, std::pair{19, 88},
+                               std::pair{25, 99}, std::pair{17, 108}, std::pair{22, 114}})
+        ok &= box(x, y, 2, 2, 255, 222, 110);
+    ok &= box(10, 61, 2, 49, 255, 233, 158) && box(29, 61, 2, 55, 255, 208, 103);
+    // Gold ornaments fill the quiet space above and below the glass.
+    for (int y : {18, 145}) {
+        ok &= box(22, y, 4, 2, 207, 142, 48) && box(20, y + 2, 8, 2, 207, 142, 48);
+        ok &= box(22, y + 4, 4, 2, 207, 142, 48);
+        ok &= box(12, y + 2, 3, 2, 114, 65, 20) && box(33, y + 2, 3, 2, 114, 65, 20);
+    }
+    if (!ok) { SDL_DestroySurface(surface); return nullptr; }
+    return surface;
+}
+
+bool draw_beer_sidebars(SDL_Renderer *renderer, SDL_Texture *art) {
+    int width = 0, height = 0, logical_width = 0, logical_height = 0;
+    SDL_FRect game{};
+    SDL_RendererLogicalPresentation mode{};
+    if (!renderer || !art || !SDL_GetRenderOutputSize(renderer, &width, &height) ||
+        !SDL_GetRenderLogicalPresentation(renderer, &logical_width, &logical_height, &mode) ||
+        !SDL_GetRenderLogicalPresentationRect(renderer, &game)) return false;
+    const float left = std::max(0.0f, game.x);
+    const float right = std::max(0.0f, float(width) - (game.x + game.w));
+    if (left < 1.0f && right < 1.0f) return true;
+    if (!SDL_SetRenderLogicalPresentation(renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED)) return false;
+    bool ok = true;
+    for (int side = 0; side < 2 && ok; ++side) {
+        const float side_width = side ? right : left;
+        if (side_width < 1.0f) continue;
+        const float start = side ? float(width) - right : 0.0f;
+        const float scale = std::min(side_width / 48.0f, float(height) / 160.0f);
+        SDL_FRect destination{start + (side_width - 48.0f * scale) / 2.0f,
+                              (float(height) - 160.0f * scale) / 2.0f, 48.0f * scale, 160.0f * scale};
+        SDL_FRect background{start, 0, side_width, float(height)};
+        ok = SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) && SDL_RenderFillRect(renderer, &background);
+        if (ok && scale >= 0.5f) {
+            SDL_FRect outer{destination.x, 0, 2 * scale, float(height)},
+                      inner{destination.x + 46 * scale, 0, 2 * scale, float(height)};
+            ok = SDL_SetRenderDrawColor(renderer, 81, 42, 14, 255) &&
+                 SDL_RenderFillRect(renderer, &outer) && SDL_RenderFillRect(renderer, &inner);
+            outer.x = destination.x + 2 * scale; outer.w = scale;
+            inner.x = destination.x + 45 * scale; inner.w = scale;
+            if (ok) ok = SDL_SetRenderDrawColor(renderer, 165, 96, 23, 255) &&
+                         SDL_RenderFillRect(renderer, &outer) && SDL_RenderFillRect(renderer, &inner);
+            if (ok) ok = SDL_SetRenderDrawColor(renderer, 126, 74, 20, 255);
+            const float spacing = 16 * scale;
+            const float first = std::fmod(destination.y + 8 * scale, spacing);
+            for (float y = first; ok && y < height; y += spacing) {
+                SDL_FRect left_dot{destination.x + 4 * scale, y, 2 * scale, 2 * scale},
+                          right_dot{destination.x + 42 * scale, y, 2 * scale, 2 * scale};
+                ok = SDL_RenderFillRect(renderer, &left_dot) && SDL_RenderFillRect(renderer, &right_dot);
+            }
+        }
+        if (ok) ok = SDL_RenderTextureRotated(renderer, art, nullptr, &destination, 0, nullptr,
+                                              side ? SDL_FLIP_NONE : SDL_FLIP_HORIZONTAL);
+    }
+    const bool restored = SDL_SetRenderLogicalPresentation(renderer, logical_width, logical_height, mode);
+    return ok && restored;
 }
 bool draw_startup_icon(SDL_Renderer *renderer, int width) {
     auto *surface = make_window_icon_surface();
@@ -95,11 +185,18 @@ Video::Video(const char *title, int width, int height, int scale, bool automatic
         }
         renderer_ = SDL_CreateRenderer(window_, nullptr);
         if (!renderer_) throw sdl_error("Cannot create renderer");
+        auto *sidebar = make_beer_sidebar_surface();
+        if (!sidebar) throw sdl_error("Cannot create beer sidebar art");
+        sidebar_ = SDL_CreateTextureFromSurface(renderer_, sidebar);
+        SDL_DestroySurface(sidebar);
+        if (!sidebar_ || !SDL_SetTextureScaleMode(sidebar_, SDL_SCALEMODE_NEAREST))
+            throw sdl_error("Cannot create beer sidebar texture");
         if (!SDL_SetRenderLogicalPresentation(renderer_, width, height, SDL_LOGICAL_PRESENTATION_LETTERBOX))
             throw sdl_error("Cannot set logical resolution");
         set_frame_size(width, height);
     } catch (...) {
         if (texture_) SDL_DestroyTexture(texture_);
+        if (sidebar_) SDL_DestroyTexture(sidebar_);
         if (renderer_) SDL_DestroyRenderer(renderer_);
         if (window_) SDL_DestroyWindow(window_);
         for (const auto &[id, gamepad] : gamepads_) { (void)id; SDL_CloseGamepad(gamepad); }
@@ -111,6 +208,7 @@ Video::Video(const char *title, int width, int height, int scale, bool automatic
 Video::~Video() {
     if (beer_cursor_) { SDL_SetCursor(SDL_GetDefaultCursor()); SDL_DestroyCursor(beer_cursor_); }
     SDL_DestroyTexture(texture_);
+    SDL_DestroyTexture(sidebar_);
     SDL_DestroyRenderer(renderer_);
     SDL_DestroyWindow(window_);
     for (const auto &[id, gamepad] : gamepads_) { (void)id; SDL_CloseGamepad(gamepad); }
@@ -237,6 +335,7 @@ void Video::present(std::span<const std::uint8_t> pixels, std::span<const Color,
 bool Video::draw_frame(const char *screenshot_path) {
     const SDL_FRect destination = frame_destination();
     if (!SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255) || !SDL_RenderClear(renderer_) ||
+        (fullscreen_ && !draw_beer_sidebars(renderer_, sidebar_)) ||
         !SDL_RenderTexture(renderer_, texture_, nullptr, &destination))
         throw sdl_error("Cannot present framebuffer");
     if (scanline_strength_) {

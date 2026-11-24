@@ -143,6 +143,10 @@ const char *compat_video_window_size_name(void);
 int compat_video_read(int repeat_adjustment);
 void compat_video_repeat_reset(void);
 int compat_menu_poll(int repeat_adjustment, int *x, int *y);
+#define MENU_SOUND_MOVE 0
+#define MENU_SOUND_SELECT 1
+#define MENU_SOUND_BACK 2
+void compat_menu_sound(int effect);
 int compat_mouse_poll(int *x, int *y);
 void compat_mouse_cursor_visible(int visible);
 void compat_video_clarity_controls(int visible);
@@ -170,7 +174,9 @@ void compat_test_menu_background(BITMAP *art);
 void compat_test_hard_spawn(int foe, int slot, int x, int direction);
 void compat_test_hard_progress(int x);
 void compat_test_shot_power(int difficulty, int base, int actual);
+void compat_test_shot_failure(void);
 void compat_test_score_view(int difficulty);
+void compat_test_score_hover(int index);
 int compat_test_score_storage(void);
 void compat_test_set_save_failure(int enabled);
 void compat_test_prepare_score_entry(int difficulty);
@@ -180,6 +186,7 @@ int compat_test_input_modes(void);
 void compat_test_stage(const char *stage);
 void compat_test_frame(int ship_x, int active_shots);
 void compat_test_shop_stage(const char *stage, int x1, int y1, int x2, int y2);
+void compat_test_shop_purchase(long before_money, long after_money, int before_weapons, int after_weapons, int cost, int placed);
 void compat_test_shop_hover(int target, int selected, int fired);
 void compat_test_shop_exit_redraw(void);
 void compat_test_closing_result(int reason, uint64_t elapsed);

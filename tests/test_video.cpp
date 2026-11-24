@@ -57,6 +57,58 @@ int main() {
           "startup screen did not draw the game icon");
     SDL_DestroyRenderer(startup_renderer);
     SDL_DestroySurface(startup);
+    // Draw the bars on a 16:9 target and make sure the 4:3 game area and
+    // logical coordinate mapping remain untouched.
+    auto *side_output = SDL_CreateSurface(960, 540, SDL_PIXELFORMAT_RGBA32);
+    auto *side_renderer = side_output ? SDL_CreateSoftwareRenderer(side_output) : nullptr;
+    auto *side_art = lastbeer::make_beer_sidebar_surface();
+    auto *side_texture = side_renderer && side_art ? SDL_CreateTextureFromSurface(side_renderer, side_art) : nullptr;
+    check(side_texture && SDL_SetTextureScaleMode(side_texture, SDL_SCALEMODE_NEAREST) &&
+          SDL_SetRenderLogicalPresentation(side_renderer, 640, 480, SDL_LOGICAL_PRESENTATION_LETTERBOX) &&
+          SDL_SetRenderDrawColor(side_renderer, 0, 0, 0, 255) && SDL_RenderClear(side_renderer) &&
+          lastbeer::draw_beer_sidebars(side_renderer, side_texture), "could not draw fullscreen beer sidebars");
+    SDL_FRect side_rect{};
+    SDL_RendererLogicalPresentation side_mode{};
+    int logical_w = 0, logical_h = 0;
+    check(SDL_GetRenderLogicalPresentationRect(side_renderer, &side_rect) &&
+          SDL_GetRenderLogicalPresentation(side_renderer, &logical_w, &logical_h, &side_mode) &&
+          near(side_rect.x, 120) && near(side_rect.w, 720) && logical_w == 640 && logical_h == 480 &&
+          side_mode == SDL_LOGICAL_PRESENTATION_LETTERBOX, "sidebar rendering changed the game viewport");
+    check(SDL_SetRenderDrawColor(side_renderer, 200, 0, 0, 255) && SDL_RenderFillRect(side_renderer, nullptr) &&
+          SDL_RenderPresent(side_renderer), "could not render game over sidebars");
+    Uint8 sr = 0, sg = 0, sb = 0;
+    check(SDL_ReadSurfacePixel(side_output, 70, 270, &sr, &sg, &sb, nullptr) && sr > 120 && sr > sg && sg > sb,
+          "left sidebar does not show amber beer");
+    check(SDL_ReadSurfacePixel(side_output, 890, 270, &sr, &sg, &sb, nullptr) && sr > 120 && sr > sg && sg > sb,
+          "right sidebar does not show amber beer");
+    check(SDL_ReadSurfacePixel(side_output, 480, 270, &sr, &sg, &sb, nullptr) && sr == 200 && sg == 0 && sb == 0,
+          "sidebar covered the game view");
+    for (int y : {0, 539}) {
+        for (int x : {60, 900})
+            check(SDL_ReadSurfacePixel(side_output, x, y, &sr, &sg, &sb, nullptr) && sr == 0 && sg == 0 && sb == 0,
+                  "sidebar background is not black");
+        for (int x : {1, 118, 841, 958})
+            check(SDL_ReadSurfacePixel(side_output, x, y, &sr, &sg, &sb, nullptr) && sr == 81 && sg == 42 && sb == 14,
+                  "sidebar trim does not reach the screen edge");
+    }
+    check(SDL_SetRenderLogicalPresentation(side_renderer, 640, 480, SDL_LOGICAL_PRESENTATION_INTEGER_SCALE) &&
+          SDL_SetRenderDrawColor(side_renderer, 0, 0, 0, 255) && SDL_RenderClear(side_renderer) &&
+          lastbeer::draw_beer_sidebars(side_renderer, side_texture) &&
+          SDL_GetRenderLogicalPresentationRect(side_renderer, &side_rect) && near(side_rect.x, 160) &&
+          SDL_SetRenderDrawColor(side_renderer, 200, 0, 0, 255) && SDL_RenderFillRect(side_renderer, nullptr) &&
+          SDL_RenderPresent(side_renderer) &&
+          SDL_ReadSurfacePixel(side_output, 70, 270, &sr, &sg, &sb, nullptr) && sr > 120 && sr > sg && sg > sb &&
+          SDL_ReadSurfacePixel(side_output, 480, 270, &sr, &sg, &sb, nullptr) && sr == 200 && sg == 0 && sb == 0,
+          "sidebars failed with integer scaling");
+    check(SDL_SetRenderLogicalPresentation(side_renderer, 640, 480, SDL_LOGICAL_PRESENTATION_STRETCH) &&
+          SDL_SetRenderDrawColor(side_renderer, 0, 0, 0, 255) && SDL_RenderClear(side_renderer) &&
+          lastbeer::draw_beer_sidebars(side_renderer, side_texture) && SDL_RenderPresent(side_renderer) &&
+          SDL_ReadSurfacePixel(side_output, 70, 270, &sr, &sg, &sb, nullptr) && sr == 0 && sg == 0 && sb == 0,
+          "sidebars appeared when the game fills the screen");
+    SDL_DestroyTexture(side_texture);
+    SDL_DestroySurface(side_art);
+    SDL_DestroyRenderer(side_renderer);
+    SDL_DestroySurface(side_output);
     auto *cursor = lastbeer::make_beer_cursor_surface();
     Uint8 cr = 0, cg = 0, cb = 0, ca = 0;
     check(cursor && cursor->w == 32 && cursor->h == 40 &&

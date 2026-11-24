@@ -7,6 +7,7 @@
 void a_shot(void);
 void a_expl(void);
 void foehit(void);
+void fire(int what);
 int deffoe(short foe, short x, short y, short x0, short y0);
 void clear_pending_explosions(void);
 extern short frameinc;
@@ -47,6 +48,38 @@ int test_projectile_cleanup(void)
   if (!check(defobject(sprite, 40, 40, OBJ_LOW) == 0,
              "the first object slot could not be allocated")) return 0;
   for (i = 0; i < MAXOBJS; ++i) _obj[i].active = 0;
+
+  /* Seven weapons can fire repeatedly even with a full enemy pool on screen. */
+  {
+    short shot_data[] = {0, 0, -20, 1, 0, 0, SHOTEND};
+    long shot_offsets[] = {0};
+    struct armstrc gun = { .sprite = sprite, .shot = 0, .period = 0 };
+    reset_projectiles();
+    killallbuddies();
+    weapon.shotfile = (unsigned char *)shot_data;
+    weapon.shot = shot_offsets;
+    intindex[0] = sprite;
+    for (i = 0; i < MAXFOES; ++i)
+      if (!check(defobject(sprite, 8 + i * 8, 16, OBJ_LOW) >= 0, "could not allocate enemy load")) return 0;
+    for (i = 0; i < MAXARMS; ++i)
+      if (!check(defarm(8 + i * 40, 160, &gun) >= 0, "could not equip every weapon")) return 0;
+    for (int volley = 0; volley < 10; ++volley) {
+      int shots = 0;
+      fire(1);
+      for (i = 0; i < MAXSHOTS; ++i) if (_shot[i].object >= 0) ++shots;
+      if (!check(shots == (volley + 1) * MAXARMS, "a fully equipped volley lost a shot")) return 0;
+    }
+    if (!check(defobject(sprite, 250, 16, OBJ_LOW) >= 0, "weapon fire exhausted enemy object capacity")) return 0;
+    updatescreen();
+    updatescreen();
+    for (i = 0; i < MAXARMS; ++i)
+      for (int p = 0; p < 2; ++p)
+        if (!check(getpixel(pages[p], 8 + i * 40, 140) == 7, "a weapon volley was not drawn")) return 0;
+    reset_projectiles();
+    killallbuddies();
+    weapon.shotfile = NULL;
+    weapon.shot = NULL;
+  }
 
   /* Delayed rendering must not collapse multiple simulation ticks. */
   updates_due = 0;

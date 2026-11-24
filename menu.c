@@ -945,13 +945,20 @@ static int ui_read_rows(int *selected, int left, int right, int y, int step,
             int changed = *selected != first + row;
             *selected = first + row;
             if (scan == -2) {
+               compat_menu_sound(MENU_SOUND_SELECT);
                if (video_menu && (*selected == 6 || *selected == 7))
                   return mx < 250 ? key_left : key_right;
                return KEY_ENTER;
             }
-            if (changed) return 0;
+            if (changed) { compat_menu_sound(MENU_SOUND_MOVE); return 0; }
          }
-      } else if (scan) return scan;
+      } else if (scan) {
+         if (scan == KEY_ESC) compat_menu_sound(MENU_SOUND_BACK);
+         else if (ui_accept(scan)) compat_menu_sound(MENU_SOUND_SELECT);
+         else if (ui_up(scan) || ui_down(scan) || scan == key_left || scan == key_right)
+            compat_menu_sound(MENU_SOUND_MOVE);
+         return scan;
+      }
       rest(5);
    }
 }
@@ -1280,7 +1287,10 @@ static void ui_options(struct sprstrc *title_font, struct sprstrc *font, SAMPLE 
       else if (ui_accept(scan)) {
          if (selected == 0) {
             int was_on = speaker(-1);
-            if (!was_on && speaker(1) && music) playsample(music);
+            if (!was_on && speaker(1)) {
+               if (music) playsample(music);
+               compat_menu_sound(MENU_SOUND_SELECT);
+            }
             else if (was_on) speaker(0);
             saveconfig();
          }
@@ -1378,7 +1388,11 @@ void menu(void)
          if (event < 0 && mx >= 182 && mx < 312 && my >= 45 && my < 165) {
             int row = (my - 45) / 20;
             if ((my - 45) % 20 < 16) {
-               if (selected != row) { selected = row; ui_draw_main(title_font, font, items, selected, frame); }
+               if (selected != row) {
+                  selected = row;
+                  if (event == -1) compat_menu_sound(MENU_SOUND_MOVE);
+                  ui_draw_main(title_font, font, items, selected, frame);
+               }
                if (event == -2) scan = KEY_ENTER;
             }
          } else if (event > 0) scan = event;
@@ -1387,11 +1401,12 @@ void menu(void)
          if (!scan) rest(8);
       }
       int action = -1;
-      if (ui_up(scan)) { if (selected > 0) --selected; }
-      else if (ui_down(scan)) { if (selected < 5) ++selected; }
+      if (ui_up(scan)) { if (selected > 0) { --selected; compat_menu_sound(MENU_SOUND_MOVE); } }
+      else if (ui_down(scan)) { if (selected < 5) { ++selected; compat_menu_sound(MENU_SOUND_MOVE); } }
       else if (ui_accept(scan)) action = selected;
       else if (scan >= KEY_1 && scan <= KEY_6) action = scan - KEY_1;
       if (action < 0) continue;
+      compat_menu_sound(MENU_SOUND_SELECT);
       if (action == 4) { ui_options(title_font, font, music); ui_palette(); continue; }
       if (action == 0 && !ui_play_difficulty(title_font, font)) continue;
       ui_stop_music(&music, &music_data);

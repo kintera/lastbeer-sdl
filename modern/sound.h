@@ -13,4 +13,6 @@ struct Sound {
 // Level*.SND entries are libraries containing multiple such records.
 Sound decode_sound(std::span<const std::uint8_t> bytes);
 std::vector<Sound> decode_sound_library(std::span<const std::uint8_t> bytes);
+enum class MenuSound { Move, Select, Back };
+Sound make_menu_sound(MenuSound effect);
 }

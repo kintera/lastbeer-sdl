@@ -89,6 +89,11 @@ if(LASTBEER_BUILD_SDL)
     set_tests_properties(sdl_projectile_cleanup PROPERTIES
       ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;LASTBEER_TEST_PROJECTILES=1"
       PASS_REGULAR_EXPRESSION "SMOKE: projectile cleanup" TIMEOUT 15)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-full-fire")
+    add_test(NAME sdl_full_ship_fire COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_full_ship_fire PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-full-fire;LASTBEER_TEST_FULL_FIRE=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: full ship fire peak=.* with no dropped shots" TIMEOUT 45)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-user" "${CMAKE_CURRENT_BINARY_DIR}/test-config")
     add_test(NAME sdl_gameplay_smoke COMMAND beer-sdl-automation)
     set_tests_properties(sdl_gameplay_smoke PROPERTIES
@@ -142,6 +147,16 @@ if(LASTBEER_BUILD_SDL)
     set_tests_properties(sdl_mouse_shop_hover PROPERTIES
       ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-mouse-shop-hover;LASTBEER_TEST_SHOP_MOUSE=1;LASTBEER_TEST_SHOP_HOVER=1"
       PASS_REGULAR_EXPRESSION "SMOKE: exit sign restored on both pages" TIMEOUT 60)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-shop-cancel")
+    add_test(NAME sdl_shop_cancel_purchase COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_shop_cancel_purchase PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-shop-cancel;LASTBEER_TEST_SHOP_CANCEL=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: shop cancellation and purchases verified" TIMEOUT 60)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-shop-balance")
+    add_test(NAME sdl_shop_balance_redraw COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_shop_balance_redraw PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-shop-balance;LASTBEER_TEST_SHOP_BALANCE=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: shop balance crosses ten correctly" TIMEOUT 45)
     foreach(mode 1 2)
       file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-mouse-shop-${mode}")
       add_test(NAME sdl_mouse_shop_mode_${mode} COMMAND beer-sdl-automation)
@@ -199,6 +214,11 @@ if(LASTBEER_BUILD_SDL)
     set_tests_properties(sdl_score_entry_mouse PROPERTIES
       ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-score-entry-mouse;LASTBEER_TEST_SCORE_ENTRY=easy;LASTBEER_TEST_SCORE_RANK=first;LASTBEER_TEST_SCORE_MOUSE=1"
       PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-score-entry-hover")
+    add_test(NAME sdl_score_entry_hover COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_score_entry_hover PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-score-entry-hover;LASTBEER_TEST_SCORE_ENTRY=easy;LASTBEER_TEST_SCORE_RANK=first;LASTBEER_TEST_SCORE_MOUSE=1;LASTBEER_TEST_SCORE_HOVER=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: score letter hover verified" TIMEOUT 45)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-score-entry-empty")
     add_test(NAME sdl_score_entry_empty COMMAND beer-sdl-automation)
     set_tests_properties(sdl_score_entry_empty PROPERTIES
@@ -208,6 +228,16 @@ if(LASTBEER_BUILD_SDL)
     set_tests_properties(sdl_menu_audio_retry PROPERTIES
       ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-menu-audio;LASTBEER_TEST_MENU_AUDIO=1"
       PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-menu-sfx")
+    add_test(NAME sdl_menu_sound_effects COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_menu_sound_effects PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-menu-sfx;LASTBEER_TEST_MENU_SFX=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: menu sounds and mute verified" TIMEOUT 45)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-sound-overlap")
+    add_test(NAME sdl_sound_overlap COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_sound_overlap PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-sound-overlap;LASTBEER_TEST_SOUND_OVERLAP=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: overlapping sound playback verified" TIMEOUT 45)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-difficulty-menu")
     add_test(NAME sdl_difficulty_menu COMMAND beer-sdl-automation)
     set_tests_properties(sdl_difficulty_menu PROPERTIES

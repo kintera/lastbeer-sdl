@@ -1,5 +1,6 @@
 #include "sound.h"
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace lastbeer {
@@ -12,6 +13,25 @@ std::uint32_t le32(std::span<const std::uint8_t> b, std::size_t p) {
            (std::uint32_t(b[p + 2]) << 16) | (std::uint32_t(b[p + 3]) << 24);
 }
 float normalized(int value) { return (value - 128) / 128.0f; }
+}
+Sound make_menu_sound(MenuSound effect) {
+    constexpr int rate = 24000;
+    const float duration = effect == MenuSound::Move ? 0.045f : 0.12f;
+    const int length = int(rate * duration);
+    Sound result{rate, 0, std::vector<float>(length)};
+    float phase = 0;
+    for (int i = 0; i < length; ++i) {
+        const float t = float(i) / rate;
+        const float frequency = effect == MenuSound::Move ? 620.0f :
+            effect == MenuSound::Select ? (t < 0.055f ? 520.0f : 780.0f) :
+                                        (t < 0.055f ? 620.0f : 400.0f);
+        phase += 6.28318530718f * frequency / rate;
+        // Short fades keep the notes soft and prevent clicks at either end.
+        const float envelope = std::min({1.0f, t / 0.004f, (duration - t) / 0.025f});
+        result.samples[i] = 0.35f * envelope * std::sin(phase);
+    }
+    result.samples.back() = 0.0f;
+    return result;
 }
 Sound decode_sound(std::span<const std::uint8_t> bytes) {
     if (bytes.size() < 10) throw std::runtime_error("Truncated sound header");

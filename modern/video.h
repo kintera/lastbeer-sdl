@@ -13,6 +13,8 @@ void scale2x(std::span<const std::uint32_t> input, int width, int height,
              std::span<std::uint32_t> output);
 std::vector<std::pair<int, int>> window_sizes_for_display(int width, int height);
 SDL_Surface *make_beer_cursor_surface(); // Caller owns the returned surface.
+SDL_Surface *make_beer_sidebar_surface(); // Caller owns the returned surface.
+bool draw_beer_sidebars(SDL_Renderer *renderer, SDL_Texture *art);
 SDL_Surface *make_window_icon_surface(); // Caller owns the returned surface.
 bool draw_startup_icon(SDL_Renderer *renderer, int width);
 // Owns one SDL window and displays indexed pixels with a mutable palette.
@@ -77,6 +79,7 @@ private:
     SDL_Window *window_ = nullptr;
     SDL_Renderer *renderer_ = nullptr;
     SDL_Texture *texture_ = nullptr;
+    SDL_Texture *sidebar_ = nullptr;
     SDL_Cursor *beer_cursor_ = nullptr;
     int width_, height_; // Fixed logical canvas.
     int frame_width_ = 0, frame_height_ = 0;

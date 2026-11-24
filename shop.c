@@ -121,7 +121,7 @@ static void waitforrelease(void)
 }
 
 
-static void placeweapon(int n)
+static int placeweapon(int n)
 {
    int    handle;	       		// Handle of new weapon.
    int    saveflash;                    // To store old objectflashcolor.
@@ -174,7 +174,7 @@ static void placeweapon(int n)
 #ifdef LASTBEER_SDL
    clear_keybuf();
 #ifdef LASTBEER_AUTOMATION
-   if (getenv("LASTBEER_TEST_SHOP_MOUSE"))
+   if (getenv("LASTBEER_TEST_SHOP_MOUSE") || getenv("LASTBEER_TEST_SHOP_CANCEL"))
       compat_test_shop_stage("shop-place", WEAPONX0 + 12, WEAPONY0 + 12, WEAPONX1 - 12, WEAPONY1 - 12);
 #endif
 #endif
@@ -260,17 +260,47 @@ static void placeweapon(int n)
       nweapons++;
    }
    glowout();
+   return abortkey == KEYSPACE;
 }
 
 static void payforweapon(int selected, struct sprstrc *f)
 {
    int i;
 
+   if (!(cheatlevel & CHEATMONEY) && !f) {
+      money -= weapon.arm[selected].cost;
+      return;
+   }
    if(!(cheatlevel & CHEATMONEY))
       for(i = money; money > (i-weapon.arm[selected].cost); money--){
+	 /* writenumber leaves leading positions untouched. Clear any digit
+	    that disappears when the balance crosses a power of ten. */
+	 long old_whole = money / 100, new_whole = (money - 1) / 100;
+	 int offset = 4;
+	 while (old_whole >= 10 && offset <= 10) {
+	    old_whole /= 10; new_whole /= 10;
+	    if (!new_whole)
+	       putspritedirect(f, XMAX - f->xs - offset * f->xs, SHOPTEXT, 0);
+	    ++offset;
+	 }
 	 writenumber(XMAX - (f->xs), SHOPTEXT, money-1, f);
          showpage(page);
       }
+}
+
+static void buyandplaceweapon(int selected)
+{
+#ifdef LASTBEER_AUTOMATION
+   long before_money = money;
+   int before_weapons = nweapons;
+#endif
+   int placed = placeweapon(selected);
+   if (placed) payforweapon(selected, NULL);
+#ifdef LASTBEER_AUTOMATION
+   if (getenv("LASTBEER_TEST_SHOP_CANCEL"))
+      compat_test_shop_purchase(before_money, money, before_weapons, nweapons,
+                                weapon.arm[selected].cost, placed);
+#endif
 }
 
 static void givemoneyback(int selected, struct sprstrc *f)
@@ -641,8 +671,9 @@ static void menucard(void)
    ye = y += font1->ys + 6;
    for (i = min(weapon.narms, SHOPMAXARMS); i < weapon.narms; i++) {
       if (!(weapon.arm[i].flags & W_ISWEAPON)) {
+	 const char *label = (weapon.arm[i].flags & W_EXTRALIFE) ? "BUY SPARE BOTTLE" : weapon.arm[i].armname;
 	 memset(text, '.',  28); text[28] = '\0';
-	 memcpy(text, weapon.arm[i].armname, strlen(weapon.arm[i].armname));
+	 memcpy(text, label, strlen(label));
 	 writetext(MENUX, y, text, font1);
 	 writenumber(MENUXPRICE, y, weapon.arm[i].cost, font1);
 	 y += font1->ys + 3;
@@ -665,8 +696,9 @@ static void menucard(void)
    row_y[weapon.narms - min(weapon.narms, SHOPMAXARMS) + 1] = MENUYEXIT;
    clear_keybuf();
 #ifdef LASTBEER_AUTOMATION
-   if (getenv("LASTBEER_TEST_SHOP_MOUSE"))
-      compat_test_shop_stage("shop-card", MENUX + 10, row_y[1] + font1->ys / 2,
+   if (getenv("LASTBEER_TEST_SHOP_MOUSE") || getenv("LASTBEER_TEST_SHOP_CANCEL") || getenv("LASTBEER_TEST_SHOP_BALANCE"))
+      compat_test_shop_stage("shop-card", MENUX + 10,
+                             row_y[getenv("LASTBEER_TEST_SHOP_BALANCE") ? narms + 1 : 1] + font1->ys / 2,
                              MENUX + 10, MENUYEXIT + font1->ys / 2);
 #endif
 #endif
@@ -759,13 +791,12 @@ static void menucard(void)
 // Something was selected
       if(selected != (weapon.narms-min(weapon.narms, SHOPMAXARMS)+1)) // Not Exit
 	 if (weapon.arm[weaponnumber[selected]].flags & W_ISWEAPON) {
-	    payforweapon(weaponnumber[selected], font2);
 	    glowout();
 	    killobject(backobj);
 	    killobject(pointobj);
 	    clearscreen();
 	    setstandardpalette();
-	    placeweapon(weaponnumber[selected]);
+	    buyandplaceweapon(weaponnumber[selected]);
 
 	    selected = 1;
 
@@ -806,8 +837,9 @@ static void menucard(void)
 	    ye = y += font1->ys + 6;
 	    for (i = min(weapon.narms, SHOPMAXARMS); i < weapon.narms; i++) {
 	       if (!(weapon.arm[i].flags & W_ISWEAPON)) {
+                  const char *label = (weapon.arm[i].flags & W_EXTRALIFE) ? "BUY SPARE BOTTLE" : weapon.arm[i].armname;
                   memset(text, '.',  28); text[28] = '\0';
-		  memcpy(text, weapon.arm[i].armname, strlen(weapon.arm[i].armname));
+		  memcpy(text, label, strlen(label));
 		  writetext(MENUX, y, text, font1);
 		  writenumber(MENUXPRICE, y, weapon.arm[i].cost, font1);
 		  y += font1->ys + 3;
@@ -820,7 +852,7 @@ static void menucard(void)
 
 	    glowin(0);
 #ifdef LASTBEER_AUTOMATION
-            if (getenv("LASTBEER_TEST_SHOP_MOUSE")) {
+            if (getenv("LASTBEER_TEST_SHOP_MOUSE") || getenv("LASTBEER_TEST_SHOP_CANCEL")) {
                clear_keybuf();
                compat_test_shop_stage("shop-card", MENUX + 10, row_y[1] + font1->ys / 2,
                                       MENUX + 10, MENUYEXIT + font1->ys / 2);
@@ -828,6 +860,10 @@ static void menucard(void)
 #endif
 
 	 } else {
+#ifdef LASTBEER_AUTOMATION
+            long before_money = money;
+            int before_lifes = lifes;
+#endif
 	    payforweapon(weaponnumber[selected], font2);
 	    switch (weapon.arm[weaponnumber[selected]].flags) {
 	       case W_SPEEDUP:
@@ -838,6 +874,28 @@ static void menucard(void)
 		  break;
 
 	    }
+#ifdef LASTBEER_AUTOMATION
+            if (getenv("LASTBEER_TEST_SHOP_BALANCE")) {
+               const int glyphs[] = {0, '9' - ' ', '.' - ' ', '7' - ' ', '0' - ' '};
+               int width = font2->xs, height = font2->ys;
+               const unsigned char *pixels = (const unsigned char *)font2->data;
+               if (before_money != 1000 || money != 970 || lifes != before_lifes + 1) {
+                  fprintf(stderr, "SMOKE: special purchase had wrong balance or life count\n"); exit(1);
+               }
+               for (int p = 0; p < 2; ++p) for (int cell = 0; cell < 5; ++cell)
+                  for (int py = 0; py < height; ++py) for (int px = 0; px < width; ++px) {
+                     int xpos = XMAX - width - (4 - cell) * width + px;
+                     int expected = pixels[glyphs[cell] * width * height + py * width + px];
+                     if (getpixel(full_pages[p], xpos, SHOPTEXT + py) != expected) {
+                        fprintf(stderr, "SMOKE: balance retained stale digits on page %d\n", p); exit(1);
+                     }
+                  }
+               fprintf(stderr, "SMOKE: shop balance crosses ten correctly\n");
+               clear_keybuf();
+               compat_test_shop_stage("shop-card", MENUX + 10, row_y[narms + 1] + font1->ys / 2,
+                                      MENUX + 10, MENUYEXIT + font1->ys / 2);
+            }
+#endif
 	 }
 
    } while(selected != weapon.narms - min(weapon.narms, SHOPMAXARMS) + 1);
@@ -992,7 +1050,7 @@ static int buyweapon(void)
 #ifdef LASTBEER_SDL
    clear_keybuf();
 #ifdef LASTBEER_AUTOMATION
-   if (getenv("LASTBEER_TEST_SHOP_MOUSE")) {
+   if (getenv("LASTBEER_TEST_SHOP_MOUSE") || getenv("LASTBEER_TEST_SHOP_CANCEL") || getenv("LASTBEER_TEST_SHOP_BALANCE")) {
       int spr = intindex[weapon.arm[1].sprite];
       compat_test_shop_stage("shop-buy", SHOPXSELL + _sprite[spr].xs / 2,
                              SHOPYSELL - _sprite[spr].ys / 2,
@@ -1185,9 +1243,8 @@ static int buyweapon(void)
       case  0: closeshop(pfont, font, obj, exitspr, pointspr);
 	       menucard();
 	       return FALSE;
-      default: payforweapon(selected, font);             // Let Player pay for new weapon
-	       closeshop(pfont, font, obj, exitspr, pointspr);
-	       placeweapon(selected);
+      default: closeshop(pfont, font, obj, exitspr, pointspr);
+	       buyandplaceweapon(selected);
 	       clearscreen();
 	       setstandardpalette();
 	       return FALSE;

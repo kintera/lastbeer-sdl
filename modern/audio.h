@@ -27,6 +27,8 @@ private:
         float volume;
     };
     int output_rate_;
+    float limiter_gain_ = 1.0f;
+    float limiter_release_;
     std::uint64_t next_id_ = 1;
     mutable std::mutex mutex_;
     std::vector<Voice> voices_;

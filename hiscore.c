@@ -144,9 +144,40 @@ static void cursorblink(int x, int y, char symbol, struct sprstrc *font)
 
    while(!keypressed()) {
 #ifdef LASTBEER_SDL
-      if (compat_mouse_poll(&score_mouse_x, &score_mouse_y) == -2) {
+      int mouse_event = compat_mouse_poll(&score_mouse_x, &score_mouse_y);
+      if (mouse_event == -2) {
          score_mouse_click = 1;
          break;
+      }
+      if (mouse_event == -1 && score_strip_font && score_mouse_x >= 0 &&
+          score_mouse_y >= 228 && score_mouse_y < 228 + score_strip_font->ys) {
+         int index = score_mouse_x / score_strip_font->xs;
+         if (index < (int)strlen(score_characters) && index != score_strip_index) {
+            int previous = score_strip_index;
+            if (previous >= 0)
+               putspritedirect(score_strip_font, previous * score_strip_font->xs, 228,
+                               score_characters[previous] - ' ');
+            score_strip_index = index;
+            putspritedirect(score_strip_font, index * score_strip_font->xs, 228, 3);
+            set = 8;
+#ifdef LASTBEER_AUTOMATION
+            if (getenv("LASTBEER_TEST_SCORE_HOVER")) {
+               int width = score_strip_font->xs, height = score_strip_font->ys;
+               const unsigned char *pixels = (const unsigned char *)score_strip_font->data;
+               const unsigned char *cursor = pixels + 3 * width * height;
+               const unsigned char *old_letter = previous >= 0 ?
+                  pixels + (score_characters[previous] - ' ') * width * height : NULL;
+               for (int p = 0; p < 2; ++p) for (int py = 0; py < height; ++py) for (int px = 0; px < width; ++px) {
+                  int offset = py * width + px;
+                  if (getpixel(full_pages[p], index * width + px, 228 + py) != cursor[offset] ||
+                      (old_letter && getpixel(full_pages[p], previous * width + px, 228 + py) != old_letter[offset])) {
+                     fprintf(stderr, "SMOKE: score hover did not redraw the letter cursor\n"); exit(1);
+                  }
+               }
+               compat_test_score_hover(index);
+            }
+#endif
+         }
       }
 #endif
       if(set==0){

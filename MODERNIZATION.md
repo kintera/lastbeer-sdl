@@ -90,7 +90,9 @@ original default table is replaced with the new defaults.
 scaling, adjustable scanline strength, brightness and contrast (0–150% in 1% steps), and vertical sync when supported by the SDL renderer.
 Smooth scaling uses linear filtering; Scale2x softens edges in the original
 pixel art. Neither is multisample antialiasing. Integer scaling may leave larger
-borders, while stretch fills the window and can distort the image. The SDL renderer uploads
+borders, while stretch fills the window and can distort the image. Fullscreen side
+borders show pixel-art beer glasses when the chosen scaling leaves room for them.
+The SDL renderer uploads
 an indexed 320×240 gameplay framebuffer and reuses its conversion buffer. The
 game catches up on short rendering delays by skipping presentations; sustained
 overload can still slow it down. VSync is off by default. Hold left or right to adjust brightness or contrast

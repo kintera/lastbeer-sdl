@@ -20,6 +20,18 @@ SDL_Surface *make_window_icon_surface() {
                     lastbeer_window_icon_rgba + y * 128 * 4, 128 * 4);
     return surface;
 }
+bool draw_startup_icon(SDL_Renderer *renderer, int width) {
+    auto *surface = make_window_icon_surface();
+    if (!surface) return false;
+    auto *icon = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_DestroySurface(surface);
+    if (!icon) return false;
+    const SDL_FRect destination = {float(width - 128) / 2, 110, 128, 128};
+    const bool rendered = SDL_SetTextureScaleMode(icon, SDL_SCALEMODE_LINEAR) &&
+                          SDL_RenderTexture(renderer, icon, nullptr, &destination);
+    SDL_DestroyTexture(icon);
+    return rendered;
+}
 void scale2x(std::span<const std::uint32_t> input, int width, int height,
              std::span<std::uint32_t> output) {
     if (width <= 0 || height <= 0 || input.size() != std::size_t(width) * height ||
@@ -184,18 +196,7 @@ void Video::set_beer_cursor() {
 void Video::show_loading(bool show_icon) {
     if (!SDL_SetRenderDrawColor(renderer_, 15, 10, 5, 255) || !SDL_RenderClear(renderer_))
         throw sdl_error("Cannot show startup screen");
-    if (show_icon) {
-        auto *surface = make_window_icon_surface();
-        if (!surface) throw sdl_error("Cannot create startup icon");
-        auto *icon = SDL_CreateTextureFromSurface(renderer_, surface);
-        SDL_DestroySurface(surface);
-        if (!icon) throw sdl_error("Cannot create startup icon texture");
-        const SDL_FRect destination = {float(width_ - 128) / 2, 110, 128, 128};
-        const bool rendered = SDL_SetTextureScaleMode(icon, SDL_SCALEMODE_LINEAR) &&
-                              SDL_RenderTexture(renderer_, icon, nullptr, &destination);
-        SDL_DestroyTexture(icon);
-        if (!rendered) throw sdl_error("Cannot draw startup icon");
-    }
+    if (show_icon && !draw_startup_icon(renderer_, width_)) throw sdl_error("Cannot draw startup icon");
     const float title_x = show_icon ? float(width_ - 16 * 8) / 2 : 220;
     const float text_x = show_icon ? float(width_ - 11 * 8) / 2 : 220;
     const float title_y = show_icon ? 260 : 225;

@@ -1,3 +1,5 @@
+<img src="packaging/icons/lastbeer.png" alt="The Last Eichhof icon" width="144" align="right">
+
 # The Last Eichhof — SDL3
 
 A modernized port of Alpha-Helix's wonderfully strange 1993 beer-themed arcade shooter. Fly the Eichhof bottle through waves of hostile drinks, buy weapons between levels, and try to make the high-score table.

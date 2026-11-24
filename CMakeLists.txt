@@ -95,6 +95,11 @@ if(LASTBEER_BUILD_SDL)
       ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-user;LASTBEER_EXPECT_AUDIO=1"
       PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45
       WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-gameplay-hud")
+    add_test(NAME sdl_gameplay_hud COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_gameplay_hud PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-gameplay-hud;LASTBEER_TEST_GAMEPLAY_HUD=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: gameplay status bar reaches the bottom" TIMEOUT 45)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-start-click")
     add_test(NAME sdl_level_start_click COMMAND beer-sdl-automation)
     set_tests_properties(sdl_level_start_click PROPERTIES
@@ -136,7 +141,7 @@ if(LASTBEER_BUILD_SDL)
     add_test(NAME sdl_mouse_shop_hover COMMAND beer-sdl-automation)
     set_tests_properties(sdl_mouse_shop_hover PROPERTIES
       ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-mouse-shop-hover;LASTBEER_TEST_SHOP_MOUSE=1;LASTBEER_TEST_SHOP_HOVER=1"
-      PASS_REGULAR_EXPRESSION "SMOKE: mouse shop purchase placement and selling" TIMEOUT 60)
+      PASS_REGULAR_EXPRESSION "SMOKE: exit sign restored on both pages" TIMEOUT 60)
     foreach(mode 1 2)
       file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-mouse-shop-${mode}")
       add_test(NAME sdl_mouse_shop_mode_${mode} COMMAND beer-sdl-automation)

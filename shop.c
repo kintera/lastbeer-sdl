@@ -1028,7 +1028,30 @@ static int buyweapon(void)
                   writetext(0, SHOPTEXT, "                 ", font);
                   if (selected == -1) {
                      killobject(obj);
+                     /* The store flips between two pages: restore the static
+                        sign on both before the arrow moves elsewhere. */
                      putsprite(exitspr, SHOPXEXIT, SHOPYEXIT, 0);
+                     page ^= 1;
+                     putsprite(exitspr, SHOPXEXIT, SHOPYEXIT, 0);
+                     page ^= 1;
+#ifdef LASTBEER_AUTOMATION
+                     if (event == -1 && getenv("LASTBEER_TEST_SHOP_HOVER")) {
+                        BITMAP *sign = _sprite[exitspr].bmp[0];
+                        int visible = 0;
+                        for (int sy = 0; sy < sign->h; ++sy) for (int sx = 0; sx < sign->w; ++sx) {
+                           int pixel = getpixel(sign, sx, sy);
+                           if (!pixel) continue;
+                           ++visible;
+                           for (int p = 0; p < 2; ++p)
+                              if (getpixel(pages[p], SHOPXEXIT + sx, SHOPYEXIT + sy) != pixel) {
+                                 fprintf(stderr, "SMOKE: exit sign differs between shop pages\n");
+                                 exit(1);
+                              }
+                        }
+                        if (!visible) { fprintf(stderr, "SMOKE: exit sign was empty\n"); exit(1); }
+                        compat_test_shop_exit_redraw();
+                     }
+#endif
                      obj = defobject(pointspr, SHOPXMENU, SHOPYMENU - yspoint, OBJ_LOW);
                   }
                   selected = mouse_target;

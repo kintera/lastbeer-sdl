@@ -11,9 +11,13 @@
 
 // Several position equates.
 
+#ifdef LASTBEER_SDL
+#define BARY                    231     // Nine-pixel status bar ends at row 239.
+#else
 #define BARY			211
+#endif
 #define BARSCOREX		114
-#define BARSCOREY		212
+#define BARSCOREY               (BARY + 1)
 #define BARSCORESPC		6
 #define BARLIFEX		40
 #define BARCLRDIGIT		10

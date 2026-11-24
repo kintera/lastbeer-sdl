@@ -558,6 +558,24 @@ static void showplayfield(void)
    displifes();
    setpage(1);
    displifes();
+#ifdef LASTBEER_AUTOMATION
+   if (getenv("LASTBEER_TEST_GAMEPLAY_HUD")) {
+      if (scorebar->xs != 320 || BARY + scorebar->ys != full_pages[0]->h ||
+          full_pages[1]->h != full_pages[0]->h || windowy1 != BARY ||
+          pages[0]->h != BARY || pages[1]->h != BARY) {
+         fprintf(stderr, "SMOKE: gameplay status bar or playfield has wrong bounds\n");
+         exit(1);
+      }
+      for (int p = 0; p < 2; ++p) for (int x = 128; x < scorebar->xs; ++x) {
+         int expected = (unsigned char)scorebar->data[(scorebar->ys - 1) * scorebar->xs + x];
+         if (getpixel(full_pages[p], x, full_pages[p]->h - 1) != expected || !expected) {
+            fprintf(stderr, "SMOKE: gameplay status bar is missing from the bottom row\n");
+            exit(1);
+         }
+      }
+      fprintf(stderr, "SMOKE: gameplay status bar reaches the bottom\n");
+   }
+#endif
 }
 
 

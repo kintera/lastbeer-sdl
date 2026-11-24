@@ -181,6 +181,7 @@ void compat_test_stage(const char *stage);
 void compat_test_frame(int ship_x, int active_shots);
 void compat_test_shop_stage(const char *stage, int x1, int y1, int x2, int y2);
 void compat_test_shop_hover(int target, int selected, int fired);
+void compat_test_shop_exit_redraw(void);
 void compat_test_closing_result(int reason, uint64_t elapsed);
 void compat_test_capture_menu(int enabled);
 #define TEST_STAGE(name) compat_test_stage(name)

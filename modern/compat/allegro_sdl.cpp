@@ -93,6 +93,7 @@ int test_menu_styles = 0;
 int test_shop_buy = 0, test_shop_card = 0, test_shop_place = 0, test_shop_sell = 0;
 int test_shop_x1 = 0, test_shop_y1 = 0, test_shop_x2 = 0, test_shop_y2 = 0;
 bool test_shop_hover_sent = false, test_shop_hover_checked = false;
+bool test_shop_leave_sent = false, test_shop_redraw_checked = false;
 SDL_JoystickID test_pad_id = 987;
 int test_frames = 0, test_start_x = -1, test_max_x = -1, test_menus = 0;
 int test_skipped_presentations = 0;
@@ -196,6 +197,22 @@ void test_pump() {
                 if (now - test_stage_at < 500) return;
                 if (!test_shop_hover_checked) {
                     std::fprintf(stderr, "SMOKE: shop hover did not select the target\n"); std::exit(1);
+                }
+                if (test_stage == "shop-buy" && test_shop_buy == 1) {
+                    if (!test_shop_leave_sent) {
+                        int w = 0, h = 0;
+                        SDL_GetWindowSize(SDL_GetWindowFromID(video->window_id()), &w, &h);
+                        SDL_Event motion{}; motion.type = SDL_EVENT_MOUSE_MOTION;
+                        motion.motion.x = float(test_shop_x1 * w) / 320;
+                        motion.motion.y = float(test_shop_y1 * h) / 240;
+                        SDL_PushEvent(&motion);
+                        test_shop_leave_sent = true;
+                        return;
+                    }
+                    if (now - test_stage_at < 750) return;
+                    if (!test_shop_redraw_checked) {
+                        std::fprintf(stderr, "SMOKE: exit sign was not checked after mouse movement\n"); std::exit(1);
+                    }
                 }
             }
             if (test_stage == "shop-buy" && test_shop_buy == 2) test_mouse_click(20, 120);
@@ -1542,6 +1559,7 @@ void compat_test_capture_menu(int enabled) {
 void compat_test_shop_stage(const char *stage, int x1, int y1, int x2, int y2) {
     test_shop_x1 = x1; test_shop_y1 = y1; test_shop_x2 = x2; test_shop_y2 = y2;
     test_shop_hover_sent = false; test_shop_hover_checked = false;
+    test_shop_leave_sent = false; test_shop_redraw_checked = false;
     if (strcmp(stage, "shop-buy") == 0) ++test_shop_buy;
     else if (strcmp(stage, "shop-card") == 0) ++test_shop_card;
     else if (strcmp(stage, "shop-place") == 0) ++test_shop_place;
@@ -1554,6 +1572,12 @@ void compat_test_shop_hover(int target, int selected, int fired) {
         std::fprintf(stderr, "SMOKE: shop hover did not immediately select without buying\n"); std::exit(1);
     }
     test_shop_hover_checked = true;
+}
+void compat_test_shop_exit_redraw(void) {
+    if (test_stage == "shop-buy" && test_shop_buy == 1 && test_shop_leave_sent) {
+        test_shop_redraw_checked = true;
+        std::fprintf(stderr, "SMOKE: exit sign restored on both pages\n");
+    }
 }
 void compat_test_closing_result(int reason, uint64_t elapsed) {
     const char *mode = std::getenv("LASTBEER_TEST_CLOSING");

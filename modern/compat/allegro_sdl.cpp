@@ -744,7 +744,13 @@ int compat_audio_probe_process(void) {
     catch (const std::exception &e) { std::fprintf(stderr, "Audio probe: %s\n", e.what()); return 1; }
 }
 void compat_show_startup(void) {
-    try { if (video) video->show_loading(); }
+    try { if (video) video->show_loading(
+#ifdef _WIN32
+        true
+#else
+        false
+#endif
+    ); }
     catch (const std::exception &e) { fail(e.what()); }
 }
 int install_sound(int, int, const char *) {

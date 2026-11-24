@@ -47,6 +47,15 @@ int main() {
           ir == 151 && ig == 17 && ib == 4 && ia == 253,
           "window icon pixels or transparency are incorrect");
     SDL_DestroySurface(icon);
+    video.show_loading(true);
+    auto *startup_renderer = SDL_GetRenderer(SDL_GetWindowFromID(video.window_id()));
+    auto *startup = startup_renderer ? SDL_RenderReadPixels(startup_renderer, nullptr) : nullptr;
+    float startup_x = 0, startup_y = 0;
+    check(startup && SDL_RenderCoordinatesToWindow(startup_renderer, 320, 174, &startup_x, &startup_y) &&
+          SDL_ReadSurfacePixel(startup, int(startup_x), int(startup_y), &ir, &ig, &ib, &ia) &&
+          ir > 100 && ig < 50 && ib < 50,
+          "startup screen did not draw the game icon");
+    SDL_DestroySurface(startup);
     auto *cursor = lastbeer::make_beer_cursor_surface();
     Uint8 cr = 0, cg = 0, cb = 0, ca = 0;
     check(cursor && cursor->w == 32 && cursor->h == 40 &&

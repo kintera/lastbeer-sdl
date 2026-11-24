@@ -31,7 +31,7 @@ public:
     void warp_mouse_to_frame(float x, float y);
     void set_beer_cursor();
     bool fullscreen() const { return fullscreen_; }
-    void show_loading();
+    void show_loading(bool show_icon = false);
     void present(std::span<const std::uint8_t> pixels, std::span<const Color, 256> palette);
     bool save_screenshot(const char *path);
     bool poll(); // Pumps events and returns false after a close request.

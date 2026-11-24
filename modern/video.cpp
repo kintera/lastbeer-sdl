@@ -181,11 +181,27 @@ void Video::set_beer_cursor() {
     if (cursor && SDL_SetCursor(cursor)) beer_cursor_ = cursor;
     else if (cursor) SDL_DestroyCursor(cursor);
 }
-void Video::show_loading() {
-    if (!SDL_SetRenderDrawColor(renderer_, 15, 10, 5, 255) || !SDL_RenderClear(renderer_) ||
-        !SDL_SetRenderDrawColor(renderer_, 255, 210, 125, 255) ||
-        !SDL_RenderDebugText(renderer_, 220, 225, "THE LAST EICHHOF") ||
-        !SDL_RenderDebugText(renderer_, 220, 245, "STARTING...") || !SDL_RenderPresent(renderer_))
+void Video::show_loading(bool show_icon) {
+    if (!SDL_SetRenderDrawColor(renderer_, 15, 10, 5, 255) || !SDL_RenderClear(renderer_))
+        throw sdl_error("Cannot show startup screen");
+    if (show_icon) {
+        auto *surface = make_window_icon_surface();
+        if (!surface) throw sdl_error("Cannot create startup icon");
+        auto *icon = SDL_CreateTextureFromSurface(renderer_, surface);
+        SDL_DestroySurface(surface);
+        if (!icon) throw sdl_error("Cannot create startup icon texture");
+        const SDL_FRect destination = {float(width_ - 128) / 2, 110, 128, 128};
+        const bool rendered = SDL_SetTextureScaleMode(icon, SDL_SCALEMODE_LINEAR) &&
+                              SDL_RenderTexture(renderer_, icon, nullptr, &destination);
+        SDL_DestroyTexture(icon);
+        if (!rendered) throw sdl_error("Cannot draw startup icon");
+    }
+    const float title_x = show_icon ? float(width_ - 16 * 8) / 2 : 220;
+    const float text_x = show_icon ? float(width_ - 11 * 8) / 2 : 220;
+    const float title_y = show_icon ? 260 : 225;
+    if (!SDL_SetRenderDrawColor(renderer_, 255, 210, 125, 255) ||
+        !SDL_RenderDebugText(renderer_, title_x, title_y, "THE LAST EICHHOF") ||
+        !SDL_RenderDebugText(renderer_, text_x, title_y + 20, "STARTING...") || !SDL_RenderPresent(renderer_))
         throw sdl_error("Cannot show startup screen");
 }
 void Video::present(std::span<const std::uint8_t> pixels, std::span<const Color, 256> palette) {

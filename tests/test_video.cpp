@@ -47,11 +47,10 @@ int main() {
           ir == 151 && ig == 17 && ib == 4 && ia == 253,
           "window icon pixels or transparency are incorrect");
     SDL_DestroySurface(icon);
-    video.show_loading(true);
+    video.show_loading();
     auto *startup = SDL_CreateSurface(640, 480, SDL_PIXELFORMAT_RGBA32);
     auto *startup_renderer = startup ? SDL_CreateSoftwareRenderer(startup) : nullptr;
-    check(startup_renderer && SDL_SetRenderDrawColor(startup_renderer, 15, 10, 5, 255) &&
-          SDL_RenderClear(startup_renderer) && lastbeer::draw_startup_icon(startup_renderer, 640) &&
+    check(startup_renderer && lastbeer::draw_startup_screen(startup_renderer, 640) &&
           SDL_ReadSurfacePixel(startup, 320, 174, &ir, &ig, &ib, &ia) &&
           ir > 100 && ig < 50 && ib < 50,
           "startup screen did not draw the game icon");

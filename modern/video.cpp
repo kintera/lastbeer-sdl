@@ -110,7 +110,8 @@ bool draw_beer_sidebars(SDL_Renderer *renderer, SDL_Texture *art) {
     const bool restored = SDL_SetRenderLogicalPresentation(renderer, logical_width, logical_height, mode);
     return ok && restored;
 }
-bool draw_startup_icon(SDL_Renderer *renderer, int width) {
+bool draw_startup_screen(SDL_Renderer *renderer, int width) {
+    if (!SDL_SetRenderDrawColor(renderer, 15, 10, 5, 255) || !SDL_RenderClear(renderer)) return false;
     auto *surface = make_window_icon_surface();
     if (!surface) return false;
     auto *icon = SDL_CreateTextureFromSurface(renderer, surface);
@@ -120,7 +121,9 @@ bool draw_startup_icon(SDL_Renderer *renderer, int width) {
     const bool rendered = SDL_SetTextureScaleMode(icon, SDL_SCALEMODE_LINEAR) &&
                           SDL_RenderTexture(renderer, icon, nullptr, &destination);
     SDL_DestroyTexture(icon);
-    return rendered;
+    return rendered && SDL_SetRenderDrawColor(renderer, 255, 210, 125, 255) &&
+           SDL_RenderDebugText(renderer, float(width - 16 * 8) / 2, 260, "THE LAST EICHHOF") &&
+           SDL_RenderDebugText(renderer, float(width - 11 * 8) / 2, 280, "STARTING...");
 }
 void scale2x(std::span<const std::uint32_t> input, int width, int height,
              std::span<std::uint32_t> output) {
@@ -291,16 +294,8 @@ void Video::set_beer_cursor() {
     if (cursor && SDL_SetCursor(cursor)) beer_cursor_ = cursor;
     else if (cursor) SDL_DestroyCursor(cursor);
 }
-void Video::show_loading(bool show_icon) {
-    if (!SDL_SetRenderDrawColor(renderer_, 15, 10, 5, 255) || !SDL_RenderClear(renderer_))
-        throw sdl_error("Cannot show startup screen");
-    if (show_icon && !draw_startup_icon(renderer_, width_)) throw sdl_error("Cannot draw startup icon");
-    const float title_x = show_icon ? float(width_ - 16 * 8) / 2 : 220;
-    const float text_x = show_icon ? float(width_ - 11 * 8) / 2 : 220;
-    const float title_y = show_icon ? 260 : 225;
-    if (!SDL_SetRenderDrawColor(renderer_, 255, 210, 125, 255) ||
-        !SDL_RenderDebugText(renderer_, title_x, title_y, "THE LAST EICHHOF") ||
-        !SDL_RenderDebugText(renderer_, text_x, title_y + 20, "STARTING...") || !SDL_RenderPresent(renderer_))
+void Video::show_loading() {
+    if (!draw_startup_screen(renderer_, width_) || !SDL_RenderPresent(renderer_))
         throw sdl_error("Cannot show startup screen");
 }
 void Video::present(std::span<const std::uint8_t> pixels, std::span<const Color, 256> palette) {

@@ -100,6 +100,10 @@ if(LASTBEER_BUILD_SDL)
       ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-user;LASTBEER_EXPECT_AUDIO=1"
       PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45
       WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME sdl_startup_splash_duration COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_startup_splash_duration PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-startup-duration;LASTBEER_TEST_STARTUP_DURATION=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: startup screen visible for" TIMEOUT 45)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-gameplay-hud")
     add_test(NAME sdl_gameplay_hud COMMAND beer-sdl-automation)
     set_tests_properties(sdl_gameplay_hud PROPERTIES

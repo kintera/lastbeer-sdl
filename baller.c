@@ -183,6 +183,9 @@ void cmdline(int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
+#ifdef LASTBEER_SDL
+   uint64_t startup_shown_at;
+#endif
 #if 0
    printf("\n\n\nTHE LAST EICHHOF [c] copyright 1993 by ALPHA-HELIX.\n");
    printf("Release 1.1\n\n");
@@ -292,6 +295,7 @@ int main(int argc, char *argv[])
    /* Show a window before testing the audio backend. If sound fails or hangs,
       continue silently instead of trapping startup before a window appears. */
    compat_show_startup();
+   startup_shown_at = compat_ticks();
    if (speaker(-1) && install_sound(DIGI_AUTODETECT, MIDI_NONE, 0)) sound_startup_failed();
 #ifdef LASTBEER_AUTOMATION
    if (getenv("LASTBEER_EXPECT_AUDIO_FALLBACK") || getenv("LASTBEER_EXPECT_NO_AUDIO")) {
@@ -314,6 +318,24 @@ int main(int argc, char *argv[])
    initfilemanager(40, 512, 8192, error);
    datapool = opendatabase("BEER.DAT");
 
+#ifdef LASTBEER_SDL
+   /* Count audio and data initialization toward the minimum display time,
+      while continuing to process window events. */
+#ifdef LASTBEER_AUTOMATION
+   if (getenv("LASTBEER_TEST_STARTUP_DURATION"))
+#endif
+   {
+      while (compat_ticks() - startup_shown_at < 3000) rest(10);
+#ifdef LASTBEER_AUTOMATION
+      if (compat_ticks() - startup_shown_at < 3000) {
+         fprintf(stderr, "Startup screen did not remain visible for three seconds.\n");
+         return 1;
+      }
+      printf("SMOKE: startup screen visible for %llu ms\n",
+             (unsigned long long)(compat_ticks() - startup_shown_at));
+#endif
+   }
+#endif
    intro();				// Show Blick intro.
 
 

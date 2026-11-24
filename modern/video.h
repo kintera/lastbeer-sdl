@@ -16,7 +16,7 @@ SDL_Surface *make_beer_cursor_surface(); // Caller owns the returned surface.
 SDL_Surface *make_beer_sidebar_surface(); // Caller owns the returned surface.
 bool draw_beer_sidebars(SDL_Renderer *renderer, SDL_Texture *art);
 SDL_Surface *make_window_icon_surface(); // Caller owns the returned surface.
-bool draw_startup_icon(SDL_Renderer *renderer, int width);
+bool draw_startup_screen(SDL_Renderer *renderer, int width);
 // Owns one SDL window and displays indexed pixels with a mutable palette.
 // All calls, including construction/destruction, must be on the SDL main thread.
 class Video {
@@ -34,7 +34,7 @@ public:
     void warp_mouse_to_frame(float x, float y);
     void set_beer_cursor();
     bool fullscreen() const { return fullscreen_; }
-    void show_loading(bool show_icon = false);
+    void show_loading();
     void present(std::span<const std::uint8_t> pixels, std::span<const Color, 256> palette);
     bool save_screenshot(const char *path);
     bool poll(); // Pumps events and returns false after a close request.

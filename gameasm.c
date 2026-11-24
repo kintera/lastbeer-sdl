@@ -120,7 +120,8 @@ int defshot (int shot, int x, int y, struct anishot *addr)
 }
 
 /* This one defines any kind of foe. (Path-followers, Shots, ...). */
-void deffoe (short foe, short x, short y, short x0, short y0)
+/* Return zero when the spawn should be retried because a pool is full. */
+int deffoe (short foe, short x, short y, short x0, short y0)
 {
   int ctr = MAXFOES;
   struct anifoe *ptr = &_foe[0];
@@ -134,16 +135,19 @@ void deffoe (short foe, short x, short y, short x0, short y0)
   } while (--ctr);
   
   if (ctr == 0)
-    return; /* FIXME: return what? */
+    return 0;
 
   /* lfoeofs is "level foe offset" */
   fs = ptrindex[lfoeofs + foe];
 
+  /* Aimed shots have no target during the death animation. */
+  if ((fs->flags & FOE_LINE) && !(fs->flags & FOE_PATH) &&
+      (_arm[0].object < 0 || _arm[0].object >= MAXOBJS))
+    return 1;
+
   /* Copy flags and check type of foe. */
 
   ptr->flags = fs->flags;
-  if (ptr->flags & FOE_STOPCOUNT)
-    frameinc = 0;
 
   if (!(ptr->flags & (FOE_TRANSPARENT | FOE_INVINCIBLE))) {
     /* Foe can explode. */
@@ -208,6 +212,28 @@ void deffoe (short foe, short x, short y, short x0, short y0)
   /* lsprofs == "level sprite offset" */
   ptr->object = defobject(intindex[lsprofs + fs->sprite],
                                  x, y, OBJ_LOW);
+  if (ptr->object < 0)
+    return 0;
+  if (ptr->flags & FOE_STOPCOUNT)
+    frameinc = 0;
+  return 1;
+}
+
+/* Required enemies released by scripts must be retried if a pool is full. */
+static int spawn_scripted_foe(short foe, short x, short y, short x0, short y0)
+{
+  struct foestrc *fs = ptrindex[lfoeofs + foe];
+  if (deffoe(foe, x, y, x0, y0)) return 1;
+  return !(fs->flags & (FOE_ENDLEVEL | FOE_STOPCOUNT));
+}
+
+/* Explosion scripts can release a boss; retain them while slots are full. */
+static struct { int object, explosion; } pending_explosions[MAXOBJS];
+static int pending_explosion_count;
+
+void clear_pending_explosions(void)
+{
+  pending_explosion_count = 0;
 }
 
 void defexpl (int obj, int explosion)
@@ -221,8 +247,12 @@ void defexpl (int obj, int explosion)
   } while (ptr++, --ctr);
 
   if (ctr == 0) {
-    /* The object still needs to disappear if all explosion slots are busy. */
-    abandonobject (obj);
+    if (pending_explosion_count < MAXOBJS) {
+      pending_explosions[pending_explosion_count].object = obj;
+      pending_explosions[pending_explosion_count++].explosion = explosion;
+    } else {
+      abandonobject(obj);
+    }
     return;
   }
 
@@ -299,8 +329,12 @@ void a_shot (void)
 
         if (subtick != 0)
           continue;
-        ptr->dx = our_dx;
-        ptr->dy = our_dy;
+        /* Reflecting shots retain per-subtick deltas, while homing shots
+           need full-frame velocity for their steering calculations. */
+        if (ptr->data[2] != SHOTHOMING) {
+          ptr->dx = our_dx;
+          ptr->dy = our_dy;
+        }
         ptr->data += 2;
 
       } else switch (cmd) {
@@ -328,9 +362,8 @@ void a_shot (void)
 
         if (fctr == 0) {
           /* No eligible foe found */
-          moveobjectdelta (ptr->object, ptr->dx, ptr->dy);
-                          //smooth_move (ptr->dx, subtick),
-                          //smooth_move (ptr->dy, subtick));
+          moveobjectdelta (ptr->object, smooth_move (ptr->dx, subtick),
+                           smooth_move (ptr->dy, subtick));
           break;
         }
 
@@ -481,10 +514,10 @@ void a_foe (void)
         goto nextcoord;
       case FOERELEASEFOE:
         /* Object releases another object. */
-        deffoe (ptr->cpath[1],
+        if (!spawn_scripted_foe (ptr->cpath[1],
                 _obj[ptr->object].xa + ptr->cpath[2],
                 _obj[ptr->object].ya + ptr->cpath[3],
-                0, 0);
+                0, 0)) break;
         ptr->cpath += 4;
         goto nextcoord;
       case FOECYCLEPATH:
@@ -558,6 +591,19 @@ void a_expl (void)
   int ctr = MAXEXPLS;
   struct aniexpl *ptr = _expl;
 
+  while (pending_explosion_count > 0) {
+    int available = 0;
+    for (int i = 0; i < MAXEXPLS; ++i)
+      if (_expl[i].object == -1) { available = 1; break; }
+    if (!available) break;
+    int obj = pending_explosions[0].object;
+    int explosion = pending_explosions[0].explosion;
+    --pending_explosion_count;
+    memmove(pending_explosions, pending_explosions + 1,
+            pending_explosion_count * sizeof(pending_explosions[0]));
+    defexpl(obj, explosion);
+  }
+
   do {
     unsigned short int cmd;
 
@@ -590,18 +636,18 @@ void a_expl (void)
       ptr->data++;
       goto nextcommand;
     case EXPLRELEASEFOE:
-      deffoe (ptr->data[1],
+      if (!spawn_scripted_foe (ptr->data[1],
               ptr->x + (signed short) ptr->data[2],
               ptr->y + (signed short) ptr->data[3],
-              0, 0); /* No arguments here in original */
+              0, 0)) break;
       ptr->data += 4;
       goto nextcommand;
     case EXPLNEWPATH:
-      deffoe (ptr->data[1],
+      if (!spawn_scripted_foe (ptr->data[1],
               ptr->x + (signed short) ptr->data[2],
               ptr->y + (signed short) ptr->data[3],
               ptr->data[4],
-              ptr->data[5]);
+              ptr->data[5])) break;
       ptr->data += 6;
       goto nextcommand;
     default:
@@ -763,7 +809,11 @@ fire_label:
 void keyboard (void)
 {
   if (subtick == 0)
-    fire (key[key_fire]);
+    fire (key[key_fire]
+#ifdef LASTBEER_SDL
+          || compat_mouse_fire()
+#endif
+    );
 
   int xchange = 0, ychange = 0;
   int movement_speed = shipspeed;
@@ -785,6 +835,19 @@ void keyboard (void)
     if (subtick % RESOLUTION < movement_speed % RESOLUTION) ++step;
     xchange = ((key[key_right] != 0) - (key[key_left] != 0)) * step;
     ychange = ((key[key_down] != 0) - (key[key_up] != 0)) * step;
+#ifdef LASTBEER_SDL
+    {
+      int target_x, target_y;
+      if (compat_mouse_target(key[key_left] || key[key_right] || key[key_up] || key[key_down],
+                              &target_x, &target_y)) {
+        const struct objstrc *ship = &_obj[_arm[0].object];
+        int dx = target_x - (ship->xa + ship->xs / 2);
+        int dy = target_y - (ship->ya + ship->ys / 2);
+        xchange = dx < -step ? -step : dx > step ? step : dx;
+        ychange = dy < -step ? -step : dy > step ? step : dy;
+      }
+    }
+#endif
   }
 
   if (key[key_pause]) {
@@ -798,6 +861,11 @@ void keyboard (void)
     /* If the player pressed the pause key to unpause, wait until the key
        is lifted to avoid pausing again. */
     while (key[key_pause]) rest(1);
+#ifdef LASTBEER_SDL
+    /* Time spent paused must not become a burst of catch-up updates. */
+    updates_due = 0;
+    tick = 0;
+#endif
   }
   a_arm(xchange, ychange);
 }
@@ -805,6 +873,15 @@ void keyboard (void)
 /* Return 0 on subtick, 1 on main tick. */
 int waitforsubtick (void)
 {
+#ifdef LASTBEER_SDL
+  while (updates_due <= 0) {
+    rest(1);
+    if (key[KEY_TAB] && updates_due <= 0) updates_due = 1;
+  }
+  --updates_due;
+  tick = 0;
+  return subtick_ == 0;
+#else
   while (!tick) {
       rest (10);
 #if 1
@@ -816,6 +893,7 @@ int waitforsubtick (void)
   if (subtick_ == 0)
     return 1;
   return 0;
+#endif
 }
 
 void waitfortick (void)
@@ -827,7 +905,12 @@ void waitfortick (void)
 
 void settick (void)
 {
+#ifdef LASTBEER_SDL
+  /* Bound catch-up after a long stall or a suspended window. */
+  if (updates_due < 8) updates_due++;
+#else
   updates_due++;
+#endif
   subtick_++;
   if (subtick_ >= RESOLUTION)
     subtick_ = 0;
@@ -906,14 +989,22 @@ int play()
   terminate = 0; /* No reason to terminate. */
   updates_due = 0;
   subtick = 0;
+#ifdef LASTBEER_SDL
+  compat_mouse_gameplay_begin(_obj[_arm[0].object].xa + _obj[_arm[0].object].xs / 2,
+                              _obj[_arm[0].object].ya + _obj[_arm[0].object].ys / 2);
+#endif
 #ifdef LASTBEER_AUTOMATION
   TEST_STAGE("playing");
 #endif
   do {
+    int attack_blocked = 0;
     next_attack:
     if (nattacks != 0 && count == attack->count) {
       if (((unsigned short) attack->foe & 0xfff0) != A_COMMAND) {
-        deffoe(attack->foe, attack->x, attack->y, 0, 0);
+        if (!deffoe(attack->foe, attack->x, attack->y, 0, 0)) {
+          attack_blocked = 1;
+          goto attack_wait;
+        }
         nattacks--;
         attack++;
         goto next_attack;
@@ -942,6 +1033,7 @@ int play()
       }
     }
 
+    attack_wait:
     /* ESC key test. */
     if (key[KEY_ESC]) {
       lifes = -1; /* Request game abort. */
@@ -952,7 +1044,15 @@ int play()
       {
         waitforsubtick ();
 
+#ifdef LASTBEER_SDL
+        /* Keep simulation time when a display refresh takes longer than one
+           update; skip presentation while processing the pending updates. */
+        compat_skip_present(updates_due > 0);
+#endif
         updatescreen();
+#ifdef LASTBEER_SDL
+        compat_skip_present(0);
+#endif
 #ifdef LASTBEER_AUTOMATION
         {
           int test_shots = 0;
@@ -1000,10 +1100,13 @@ int play()
     }
 #endif
 
-    count += frameinc; /* Inrement frame count. */
+    if (!attack_blocked) count += frameinc;
     if (invincible) invincible--;
   } while ((invincible != 0) || terminate == 0);
 
+#ifdef LASTBEER_SDL
+  compat_gameplay_end();
+#endif
   haltsound();
 
   if (terminate == 1) {

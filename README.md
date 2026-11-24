@@ -54,7 +54,13 @@ The game looks for `BEER.DAT` next to the executable, then in the configured dat
 | Toggle fullscreen | F11 or Alt+Enter | — |
 | Save screenshot | Alt+S | — |
 
-Keyboard and controller bindings can be changed in Options. Typing a custom high-score name requires a keyboard; a controller can accept the default name.
+Choose Keyboard Only, Keyboard & Mouse, or Controller under **Options → Controls**. The Bindings link opens the selected mode's keyboard or controller bindings; controller selection and controller bindings are also available there. Keyboard and controller can always navigate menus. For high-score text, use left/right to move between character positions, up/down to change the current character, and Fire to advance. Move to DONE and press Fire to finish; Back also finishes. Blank entries receive a randomly chosen spoof beer name.
+
+Use the beer-mug pointer to select main-menu and Options rows. The pointer is visible in menus, the shop, and high scores, and hidden during gameplay. Choose **Keyboard & Mouse** to steer the ship toward the pointer and fire with the left mouse button. The pointer is placed at the bottle when a life starts, and the ship keeps its normal speed limit. Keyboard movement can take over; move the mouse again to resume mouse steering. Pause and leaving a level use the keyboard or the selected controller.
+
+In the between-level shop, move the pointer over an item, the menu card, or the exit to highlight it; click to select it. Click inside the placement box to position a weapon. Easy doubles both level money bonuses and the money earned from points at the shop; Classic and Hard use the same payouts.
+
+Mouse selection works in menus, the shop, and high scores in every input mode. On score entry, type directly or use left/right arrows to choose a character position and up/down to change its letter. You can also click letters along the bottom, click a character position to edit it, and click DONE to submit. On the score table, click the arrows to change difficulty or BACK to leave.
 
 ## Credits and license
 

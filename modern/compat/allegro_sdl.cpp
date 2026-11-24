@@ -11,10 +11,13 @@
 #include <cstdio>
 #include <deque>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 extern "C" {
@@ -31,15 +34,27 @@ namespace {
 constexpr int padding = 1024;
 std::unique_ptr<lastbeer::Video> video;
 std::unique_ptr<lastbeer::AudioDevice> audio;
+bool skip_present = false;
+std::uint64_t last_presented_at = 0;
+struct AudioAttempt {
+    std::mutex mutex;
+    std::unique_ptr<lastbeer::AudioDevice> device;
+    std::string error;
+    bool finished = false;
+    bool abandoned = false;
+};
+std::shared_ptr<AudioAttempt> audio_attempt;
 std::array<lastbeer::Color, 256> colors{};
 std::map<const SAMPLE *, std::vector<std::uint64_t>> sample_voices;
 struct QueuedKey { int value; bool gamepad; };
 std::deque<QueuedKey> key_queue;
+bool last_key_gamepad = false;
 int video_repeat_key = 0;
 std::uint64_t video_repeat_at = 0;
 struct Preferences {
     lastbeer::PadBindings bindings = lastbeer::default_pad_bindings();
     std::string guid;
+    std::string controller_identity;
     int window_size = 0;
     int window_width = 0, window_height = 0;
     int filter = 0;
@@ -47,8 +62,14 @@ struct Preferences {
     int brightness = 100, contrast = 100, difficulty = 1, scanlines = 0;
     int font_style = 2, text_color = 1;
     bool fullscreen = false, vsync = false;
+    bool mouse_control = false;
+    int input_mode = 0; // Keyboard, keyboard + mouse, or controller.
 };
 Preferences preferences;
+bool gameplay_input = false;
+std::uint64_t mouse_motion_seen = 0;
+std::uint64_t menu_motion_seen = 0, menu_click_seen = 0;
+bool mouse_target_active = false;
 bool preferences_loaded = false;
 bool pending_auto_size = false;
 std::vector<std::uint8_t> frame_pixels;
@@ -65,11 +86,16 @@ std::uint64_t test_stage_at = 0, test_release_at = 0;
 SDL_Scancode test_release_key = SDL_SCANCODE_UNKNOWN;
 SDL_GamepadButton test_release_button = SDL_GAMEPAD_BUTTON_INVALID;
 bool test_sent = false, test_release_is_pad = false;
-int test_options = 0, test_controls = 0, test_bindings = 0;
+bool test_start_motion_sent = false, test_start_click_sent = false;
+int test_options = 0, test_input_settings = 0, test_controls = 0, test_bindings = 0;
 int test_controller_select = 0, test_pad_controls = 0, test_pad_bind = 0, test_video_settings = 0;
 int test_menu_styles = 0;
+int test_shop_buy = 0, test_shop_card = 0, test_shop_place = 0, test_shop_sell = 0;
+int test_shop_x1 = 0, test_shop_y1 = 0, test_shop_x2 = 0, test_shop_y2 = 0;
+bool test_shop_hover_sent = false, test_shop_hover_checked = false;
 SDL_JoystickID test_pad_id = 987;
 int test_frames = 0, test_start_x = -1, test_max_x = -1, test_menus = 0;
+int test_skipped_presentations = 0;
 int test_menu_last_frame = -1, test_menu_animation_changes = 0;
 int test_hard_spawns = 0;
 int test_hard_start_x = 0, test_hard_direction = 0, test_hard_motion = 0;
@@ -92,6 +118,17 @@ void test_pad(SDL_GamepadButton button, bool down) {
     event.gbutton.button = button;
     SDL_PushEvent(&event);
 }
+void test_mouse_click(int x, int y) {
+    int w = 0, h = 0;
+    SDL_GetWindowSize(SDL_GetWindowFromID(video->window_id()), &w, &h);
+    SDL_Event motion{}; motion.type = SDL_EVENT_MOUSE_MOTION;
+    motion.motion.x = float(x * w) / 320; motion.motion.y = float(y * h) / 240;
+    SDL_PushEvent(&motion);
+    SDL_Event button{}; button.type = SDL_EVENT_MOUSE_BUTTON_DOWN; button.button.button = SDL_BUTTON_LEFT;
+    button.button.x = motion.motion.x; button.button.y = motion.motion.y;
+    SDL_PushEvent(&button);
+    button.type = SDL_EVENT_MOUSE_BUTTON_UP; SDL_PushEvent(&button);
+}
 void test_pump() {
     auto now = SDL_GetTicks();
     if (test_release_at && now >= test_release_at) {
@@ -108,10 +145,107 @@ void test_pump() {
         const bool adjustment_test = std::getenv("LASTBEER_TEST_VIDEO_ADJUST") != nullptr;
         const bool style_test = std::getenv("LASTBEER_TEST_MENU_STYLE") != nullptr;
         const bool entry_test = std::getenv("LASTBEER_TEST_SCORE_ENTRY") != nullptr;
+        const bool pad_entry = std::getenv("LASTBEER_TEST_SCORE_PAD") != nullptr;
+        const bool keyboard_entry = std::getenv("LASTBEER_TEST_SCORE_ARROWS") != nullptr;
+        const bool mouse_entry = std::getenv("LASTBEER_TEST_SCORE_MOUSE") != nullptr;
+        const bool mixed_entry = std::getenv("LASTBEER_TEST_SCORE_MIXED") != nullptr;
+        const bool mouse_score_view = std::getenv("LASTBEER_TEST_SCORE_MOUSE_VIEW") != nullptr;
+        const bool menu_audio = std::getenv("LASTBEER_TEST_MENU_AUDIO") != nullptr;
+        const bool mouse_test = std::getenv("LASTBEER_TEST_MOUSE") != nullptr;
+        const bool mouse_menu_test = std::getenv("LASTBEER_TEST_MOUSE_MENU") != nullptr;
+        const bool shop_test = std::getenv("LASTBEER_TEST_SHOP_MOUSE") != nullptr;
+        const char *closing_test = std::getenv("LASTBEER_TEST_CLOSING");
         const char *play_test = std::getenv("LASTBEER_TEST_PLAY_DIFFICULTY");
         SDL_Scancode code = test_stage == "menu" ? (test_menus == 1 ? SDL_SCANCODE_1 : SDL_SCANCODE_6) : SDL_SCANCODE_SPACE;
         SDL_GamepadButton pad = SDL_GAMEPAD_BUTTON_INVALID;
-        if (play_test && test_stage == "menu") {
+        if (std::getenv("LASTBEER_TEST_START_CLICK") && test_stage == "start") {
+            if (!test_start_motion_sent) {
+                SDL_Event motion{}; motion.type = SDL_EVENT_MOUSE_MOTION; motion.motion.x = 10; motion.motion.y = 10;
+                SDL_PushEvent(&motion);
+                test_start_motion_sent = true;
+            } else if (now - test_stage_at >= 500) {
+                test_mouse_click(160, 120);
+                test_start_click_sent = true;
+                test_sent = true;
+            }
+            return;
+        }
+        if (closing_test && test_stage == "closing") {
+            if (strcmp(closing_test, "click") == 0) test_mouse_click(160, 120);
+            else {
+                SDL_Event motion{}; motion.type = SDL_EVENT_MOUSE_MOTION; motion.motion.x = 10; motion.motion.y = 10;
+                SDL_PushEvent(&motion);
+            }
+            test_sent = true;
+            return;
+        }
+        if (closing_test && test_stage == "menu") code = SDL_SCANCODE_6;
+        if (shop_test && (test_stage == "shop-buy" || test_stage == "shop-card" ||
+                          test_stage == "shop-place" || test_stage == "shop-sell")) {
+            if (std::getenv("LASTBEER_TEST_SHOP_HOVER") && test_stage != "shop-place") {
+                if (!test_shop_hover_sent) {
+                    int w = 0, h = 0;
+                    SDL_GetWindowSize(SDL_GetWindowFromID(video->window_id()), &w, &h);
+                    SDL_Event motion{}; motion.type = SDL_EVENT_MOUSE_MOTION;
+                    motion.motion.x = float(test_shop_x2 * w) / 320;
+                    motion.motion.y = float(test_shop_y2 * h) / 240;
+                    SDL_PushEvent(&motion);
+                    test_shop_hover_sent = true;
+                    return;
+                }
+                if (now - test_stage_at < 500) return;
+                if (!test_shop_hover_checked) {
+                    std::fprintf(stderr, "SMOKE: shop hover did not select the target\n"); std::exit(1);
+                }
+            }
+            if (test_stage == "shop-buy" && test_shop_buy == 2) test_mouse_click(20, 120);
+            else {
+                const bool second = (test_stage == "shop-buy" && test_shop_buy >= 3) ||
+                                    (test_stage == "shop-card" && test_shop_card >= 2) ||
+                                    (test_stage == "shop-place" && test_shop_place >= 2) ||
+                                    (test_stage == "shop-sell" && test_shop_sell >= 2);
+                test_mouse_click(second ? test_shop_x2 : test_shop_x1, second ? test_shop_y2 : test_shop_y1);
+            }
+            test_sent = true;
+            return;
+        }
+        if (mouse_menu_test && (test_stage == "menu" || test_stage == "options" || test_stage == "input-settings")) {
+            if (test_stage == "menu") test_mouse_click(220, test_menus == 1 ? 133 : 153);
+            else if (test_stage == "options") test_mouse_click(100, test_options == 1 ? 73 : 153);
+            else test_mouse_click(100, test_input_settings == 1 ? 53 : 133);
+            test_sent = true;
+            return;
+        }
+        if (mouse_score_view && (test_stage == "menu" || test_stage == "score")) {
+            if (test_stage == "menu") test_mouse_click(220, test_menus == 1 ? 73 : 153);
+            else test_mouse_click(test_score_views < 3 ? 140 : 240, 185);
+            test_sent = true;
+            return;
+        }
+        if (entry_test && mixed_entry && (test_stage == "score-name" || test_stage == "score-winner")) {
+            const int step = test_stage == "score-name" ? test_score_name_keys : test_score_winner_keys;
+            if ((test_stage == "score-name" && step <= 2) || (test_stage == "score-winner" && step == 1)) {
+                test_mouse_click(test_stage == "score-name" && step == 1 ? 12 : 20, 232);
+                test_sent = true;
+                return;
+            }
+            code = test_stage == "score-name" && (step == 3 || step == 4) ? SDL_SCANCODE_LEFT :
+                   test_stage == "score-name" && step == 5 ? SDL_SCANCODE_C : SDL_SCANCODE_RETURN;
+        }
+        else if (entry_test && mouse_entry && (test_stage == "score-name" || test_stage == "score-winner")) {
+            const int step = test_stage == "score-name" ? test_score_name_keys : test_score_winner_keys;
+            if (test_stage == "score-name" && step == 3) test_mouse_click(58, 64);
+            else if ((test_stage == "score-name" && step == 5) || (test_stage == "score-winner" && step == 2))
+                test_mouse_click(250, 175);
+            else test_mouse_click(test_stage == "score-name" && step == 1 ? 12 : 20, 232);
+            test_sent = true;
+            return;
+        }
+        if (entry_test && mixed_entry && (test_stage == "score-name" || test_stage == "score-winner")) { /* use code above */ }
+        else if (mouse_test && test_stage == "menu") code = test_menus == 1 ? SDL_SCANCODE_5 : test_menus == 2 ? SDL_SCANCODE_1 : SDL_SCANCODE_6;
+        else if (mouse_test && test_stage == "options") code = test_options == 1 ? SDL_SCANCODE_DOWN : test_options == 2 ? SDL_SCANCODE_RETURN : SDL_SCANCODE_ESCAPE;
+        else if (mouse_test && test_stage == "input-settings") code = test_input_settings == 1 ? SDL_SCANCODE_RIGHT : SDL_SCANCODE_ESCAPE;
+        else if (play_test && test_stage == "menu") {
             const bool retry = (strcmp(play_test, "cancel") == 0 || strcmp(play_test, "back") == 0) && test_menus == 2;
             code = (test_menus == 1 || retry) ? SDL_SCANCODE_1 : SDL_SCANCODE_6;
         }
@@ -129,17 +263,46 @@ void test_pump() {
             else if (strcmp(play_test, "back") == 0)
                 code = test_play_difficulty_steps <= 2 ? SDL_SCANCODE_DOWN : SDL_SCANCODE_RETURN;
         }
-        else if (entry_test && test_stage == "score-name") code = test_score_name_keys == 1 ? SDL_SCANCODE_A : SDL_SCANCODE_RETURN;
-        else if (entry_test && test_stage == "score-winner") code = test_score_winner_keys == 1 ? SDL_SCANCODE_B : SDL_SCANCODE_RETURN;
+        else if (entry_test && (test_stage == "score-name" || test_stage == "score-winner") && keyboard_entry) {
+            const int step = test_stage == "score-name" ? test_score_name_keys : test_score_winner_keys;
+            if (test_stage == "score-name") {
+                const SDL_Scancode sequence[] = {SDL_SCANCODE_UP, SDL_SCANCODE_UP, SDL_SCANCODE_RIGHT,
+                    SDL_SCANCODE_UP, SDL_SCANCODE_LEFT, SDL_SCANCODE_DOWN, SDL_SCANCODE_RIGHT,
+                    SDL_SCANCODE_UP, SDL_SCANCODE_RIGHT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_RETURN};
+                code = step >= 1 && step <= 11 ? sequence[step - 1] : SDL_SCANCODE_RETURN;
+            } else {
+                const SDL_Scancode sequence[] = {SDL_SCANCODE_UP, SDL_SCANCODE_UP, SDL_SCANCODE_RIGHT,
+                    SDL_SCANCODE_RIGHT, SDL_SCANCODE_RETURN};
+                code = step >= 1 && step <= 5 ? sequence[step - 1] : SDL_SCANCODE_RETURN;
+            }
+        }
+        else if (entry_test && (test_stage == "score-name" || test_stage == "score-winner") && pad_entry) {
+            const int step = test_stage == "score-name" ? test_score_name_keys : test_score_winner_keys;
+            if (test_stage == "score-name") {
+                const SDL_GamepadButton sequence[] = {SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_UP,
+                    SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_LEFT,
+                    SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_UP,
+                    SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_SOUTH};
+                pad = step >= 1 && step <= 11 ? sequence[step - 1] : SDL_GAMEPAD_BUTTON_EAST;
+            } else {
+                const SDL_GamepadButton sequence[] = {SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_UP,
+                    SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_SOUTH};
+                pad = step >= 1 && step <= 5 ? sequence[step - 1] : SDL_GAMEPAD_BUTTON_EAST;
+            }
+        }
+        else if (entry_test && test_stage == "score-name") code = !std::getenv("LASTBEER_TEST_SCORE_EMPTY") && test_score_name_keys == 1 ? SDL_SCANCODE_A : SDL_SCANCODE_RETURN;
+        else if (entry_test && test_stage == "score-winner") code = !std::getenv("LASTBEER_TEST_SCORE_EMPTY") && test_score_winner_keys == 1 ? SDL_SCANCODE_B : SDL_SCANCODE_RETURN;
+        else if (menu_audio && test_stage == "menu") code = test_menus == 1 ? SDL_SCANCODE_5 : SDL_SCANCODE_6;
+        else if (menu_audio && test_stage == "options") code = test_options <= 2 ? SDL_SCANCODE_RETURN : SDL_SCANCODE_ESCAPE;
         else if (style_test && test_stage == "menu") code = test_menus == 1 ? SDL_SCANCODE_5 : SDL_SCANCODE_6;
-        else if (style_test && test_stage == "options") code = test_options <= 6 ? SDL_SCANCODE_DOWN : test_options == 7 ? SDL_SCANCODE_RETURN : SDL_SCANCODE_ESCAPE;
+        else if (style_test && test_stage == "options") code = test_options <= 4 ? SDL_SCANCODE_DOWN : test_options == 5 ? SDL_SCANCODE_RETURN : SDL_SCANCODE_ESCAPE;
         else if (style_test && test_stage == "menu-style") {
             if (test_menu_styles <= 3 || test_menu_styles == 5 || test_menu_styles == 6) code = SDL_SCANCODE_RIGHT;
             else if (test_menu_styles == 4 || test_menu_styles == 7) code = SDL_SCANCODE_DOWN;
             else code = SDL_SCANCODE_RETURN;
         }
         else if (adjustment_test && test_stage == "menu") code = test_menus == 1 ? SDL_SCANCODE_5 : SDL_SCANCODE_6;
-        else if (adjustment_test && test_stage == "options") code = test_options <= 4 ? SDL_SCANCODE_DOWN : test_options == 5 ? SDL_SCANCODE_RETURN : SDL_SCANCODE_ESCAPE;
+        else if (adjustment_test && test_stage == "options") code = test_options <= 2 ? SDL_SCANCODE_DOWN : test_options == 3 ? SDL_SCANCODE_RETURN : SDL_SCANCODE_ESCAPE;
         else if (adjustment_test && test_stage == "video-settings") {
             if (test_video_settings <= 6 || test_video_settings == 9) code = SDL_SCANCODE_DOWN;
             else if (test_video_settings == 7 || test_video_settings == 11) code = SDL_SCANCODE_LEFT;
@@ -147,14 +310,20 @@ void test_pump() {
             else code = SDL_SCANCODE_ESCAPE;
         }
         else if (difficulty_test && test_stage == "menu") code = test_menus == 1 ? SDL_SCANCODE_5 : test_menus == 2 ? SDL_SCANCODE_1 : SDL_SCANCODE_6;
-        else if (difficulty_test && test_stage == "options") code = test_options <= 5 ? SDL_SCANCODE_DOWN : test_options == 6 ? SDL_SCANCODE_RIGHT : SDL_SCANCODE_ESCAPE;
+        else if (difficulty_test && test_stage == "options") code = test_options <= 3 ? SDL_SCANCODE_DOWN : test_options == 4 ? SDL_SCANCODE_RIGHT : SDL_SCANCODE_ESCAPE;
         else if (score_test && test_stage == "menu") code = test_menus == 1 ? SDL_SCANCODE_2 : SDL_SCANCODE_6;
         else if (score_test && test_stage == "score") code = test_score_views < 3 ? SDL_SCANCODE_RIGHT : SDL_SCANCODE_SPACE;
         else if (platform_test) {
             if (test_stage == "menu") code = test_menus == 1 ? SDL_SCANCODE_5 : SDL_SCANCODE_6;
             else if (test_stage == "options") {
-                if (test_options == 1 || test_options == 2 || test_options == 4 || test_options == 6) code = SDL_SCANCODE_DOWN;
-                else if (test_options == 3 || test_options == 5 || test_options == 7) code = SDL_SCANCODE_RETURN;
+                if (test_options == 1 || test_options == 3) code = SDL_SCANCODE_DOWN;
+                else if (test_options == 2 || test_options == 4) code = SDL_SCANCODE_RETURN;
+                else code = SDL_SCANCODE_ESCAPE;
+            } else if (test_stage == "input-settings") {
+                if (test_input_settings <= 2) code = SDL_SCANCODE_RIGHT;
+                else if (test_input_settings == 3 || test_input_settings == 4) code = SDL_SCANCODE_DOWN;
+                else if (test_input_settings == 5 || test_input_settings == 7) code = SDL_SCANCODE_RETURN;
+                else if (test_input_settings == 6) code = SDL_SCANCODE_UP;
                 else code = SDL_SCANCODE_ESCAPE;
             } else if (test_stage == "controller-select") {
                 code = test_controller_select == 1 ? SDL_SCANCODE_DOWN : test_controller_select == 2 ? SDL_SCANCODE_RETURN : SDL_SCANCODE_ESCAPE;
@@ -173,6 +342,8 @@ void test_pump() {
             if (test_stage == "menu") code = test_menus == 1 ? SDL_SCANCODE_5 : SDL_SCANCODE_6;
             else if (test_stage == "options") pad = test_options == 1 ? SDL_GAMEPAD_BUTTON_DPAD_DOWN :
                                                     test_options == 2 ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST;
+            else if (test_stage == "input-settings") pad = test_input_settings == 1 ? SDL_GAMEPAD_BUTTON_DPAD_DOWN :
+                                                            test_input_settings == 2 ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST;
             else if (test_stage == "controls") pad = (test_controls == 1 || test_controls == 3 || test_controls == 4 || test_controls == 10) ? SDL_GAMEPAD_BUTTON_SOUTH :
                                                      (test_controls == 2 || (test_controls >= 5 && test_controls <= 9)) ? SDL_GAMEPAD_BUTTON_DPAD_DOWN : SDL_GAMEPAD_BUTTON_EAST;
             else if (test_stage == "bind") {
@@ -187,12 +358,19 @@ void test_pump() {
         }
         test_release_is_pad = pad != SDL_GAMEPAD_BUTTON_INVALID;
         if (test_release_is_pad) { test_pad(pad, true); test_release_button = pad; }
-        else { test_key(code, true); test_release_key = code; }
+        else {
+            test_key(code, true);
+            if (std::getenv("LASTBEER_TEST_SCORE_BATCH") && test_stage == "score-name" && test_score_name_keys == 1) {
+                test_key(SDL_SCANCODE_B, true); test_key(SDL_SCANCODE_B, false);
+            }
+            test_release_key = code;
+        }
         test_release_at = now + 80;
         test_sent = true;
     }
     if (test_stage == "playing" && test_frames >= 80 && !test_sent) {
         if (test_start_x < 0 || test_max_x <= test_start_x || !test_saw_shot ||
+            (std::getenv("LASTBEER_TEST_SLOW_RENDER") && test_skipped_presentations == 0) ||
             ((std::getenv("LASTBEER_TEST_HARD_SPAWN") || std::getenv("LASTBEER_TEST_DIFFICULTY_MENU")) &&
              (test_hard_spawns == 0 || !test_hard_motion)) ||
             (std::getenv("LASTBEER_TEST_EASY_MODE") && test_max_x - test_start_x <= 30) ||
@@ -253,11 +431,14 @@ void save_preferences() {
     auto tmp = path + ".tmp";
     std::ofstream out(tmp, std::ios::trunc);
     if (!out) { std::fprintf(stderr, "Could not save platform settings.\n"); return; }
-    out << "LASTBEER_PLATFORM_7\n" << (preferences.guid.empty() ? "auto" : preferences.guid) << '\n'
+    out << "LASTBEER_PLATFORM_8\n" << (preferences.guid.empty() ? "auto" : preferences.guid) << '\n'
+        << (preferences.controller_identity.empty() ? "-" : preferences.controller_identity) << '\n'
         << preferences.window_size << ' ' << preferences.fullscreen << ' ' << preferences.filter << ' ' << preferences.vsync
         << ' ' << preferences.scaling << ' ' << preferences.scanlines << ' ' << preferences.brightness << ' ' << preferences.difficulty << ' ' << preferences.contrast
         << ' ' << preferences.window_width << ' ' << preferences.window_height << ' ' << preferences.font_style << ' ' << preferences.text_color << '\n';
     for (const auto &b : preferences.bindings) out << b.primary << ' ' << b.secondary << '\n';
+    out << "MOUSE " << preferences.mouse_control << '\n'
+        << "INPUT_MODE " << preferences.input_mode << '\n';
     out.close();
     if (!out || !SDL_RenamePath(tmp.c_str(), path.c_str()))
         std::fprintf(stderr, "Could not save platform settings.\n");
@@ -286,6 +467,8 @@ void load_preferences() {
     if (!preferences_loaded && std::getenv("LASTBEER_TEST_PLAY_DIFFICULTY") && !path.empty()) std::remove(path.c_str());
     if (!preferences_loaded && std::getenv("LASTBEER_TEST_VIDEO_ADJUST") && !path.empty()) std::remove(path.c_str());
     if (!preferences_loaded && std::getenv("LASTBEER_TEST_MENU_STYLE") && !path.empty()) std::remove(path.c_str());
+    if (!preferences_loaded && std::getenv("LASTBEER_TEST_MOUSE") && !path.empty()) std::remove(path.c_str());
+    if (!preferences_loaded && std::getenv("LASTBEER_TEST_MOUSE_MENU") && !path.empty()) std::remove(path.c_str());
     if (!preferences_loaded && std::getenv("LASTBEER_TEST_PREVIOUS_VIDEO_CONFIG") && !path.empty()) {
         const int version = std::getenv("LASTBEER_TEST_PREVIOUS_VIDEO_CONFIG")[0] - '0';
         std::ofstream fixture(path, std::ios::trunc);
@@ -293,6 +476,7 @@ void load_preferences() {
         if (version >= 2) fixture << (version == 2 ? " 1 1" : " 2 1");
         if (version >= 4) fixture << (version == 4 ? " 3 2" : version == 5 ? " 1 2" : " 123 2");
         if (version >= 5) fixture << (version == 5 ? " 4" : " 145");
+        if (version >= 7) fixture << " 960 720 2 1";
         fixture << '\n';
         for (const auto &b : lastbeer::default_pad_bindings()) fixture << b.primary << ' ' << b.secondary << '\n';
     }
@@ -300,24 +484,29 @@ void load_preferences() {
     if (!path.empty()) {
         std::ifstream in(path);
         Preferences candidate;
-        std::string magic, guid;
+        std::string magic, guid, controller_identity;
         int fullscreen = -1, filter = -1, vsync = -1, scaling = 0, scanlines = 0, brightness = 2, difficulty = 1, contrast = 2;
         int window_width = 0, window_height = 0, font_style = 2, text_color = 1;
-        if (in >> magic >> guid >> candidate.window_size >> fullscreen >> filter >> vsync &&
-            (magic == "LASTBEER_PLATFORM_1" || magic == "LASTBEER_PLATFORM_2" || magic == "LASTBEER_PLATFORM_3" || magic == "LASTBEER_PLATFORM_4" || magic == "LASTBEER_PLATFORM_5" || magic == "LASTBEER_PLATFORM_6" || magic == "LASTBEER_PLATFORM_7") &&
+        if (in >> magic >> guid &&
+            (magic != "LASTBEER_PLATFORM_8" || bool(in >> controller_identity)) &&
+            bool(in >> candidate.window_size >> fullscreen >> filter >> vsync) &&
+            (magic == "LASTBEER_PLATFORM_1" || magic == "LASTBEER_PLATFORM_2" || magic == "LASTBEER_PLATFORM_3" || magic == "LASTBEER_PLATFORM_4" || magic == "LASTBEER_PLATFORM_5" || magic == "LASTBEER_PLATFORM_6" || magic == "LASTBEER_PLATFORM_7" || magic == "LASTBEER_PLATFORM_8") &&
             (magic == "LASTBEER_PLATFORM_1" || bool(in >> scaling >> scanlines)) &&
-            ((magic != "LASTBEER_PLATFORM_4" && magic != "LASTBEER_PLATFORM_5" && magic != "LASTBEER_PLATFORM_6" && magic != "LASTBEER_PLATFORM_7") || bool(in >> brightness >> difficulty)) &&
-            ((magic != "LASTBEER_PLATFORM_5" && magic != "LASTBEER_PLATFORM_6" && magic != "LASTBEER_PLATFORM_7") || bool(in >> contrast)) &&
-            (magic != "LASTBEER_PLATFORM_7" || bool(in >> window_width >> window_height >> font_style >> text_color)) &&
-            candidate.window_size >= 0 && candidate.window_size <= (magic == "LASTBEER_PLATFORM_7" ? 128 : 3) &&
+            ((magic != "LASTBEER_PLATFORM_4" && magic != "LASTBEER_PLATFORM_5" && magic != "LASTBEER_PLATFORM_6" && magic != "LASTBEER_PLATFORM_7" && magic != "LASTBEER_PLATFORM_8") || bool(in >> brightness >> difficulty)) &&
+            ((magic != "LASTBEER_PLATFORM_5" && magic != "LASTBEER_PLATFORM_6" && magic != "LASTBEER_PLATFORM_7" && magic != "LASTBEER_PLATFORM_8") || bool(in >> contrast)) &&
+            ((magic != "LASTBEER_PLATFORM_7" && magic != "LASTBEER_PLATFORM_8") || bool(in >> window_width >> window_height >> font_style >> text_color)) &&
+            candidate.window_size >= 0 && candidate.window_size <= ((magic == "LASTBEER_PLATFORM_7" || magic == "LASTBEER_PLATFORM_8") ? 128 : 3) &&
             fullscreen >= 0 && fullscreen <= 1 && filter >= 0 && filter <= (magic == "LASTBEER_PLATFORM_1" ? 1 : 2) &&
             vsync >= 0 && vsync <= 1 && scaling >= 0 && scaling <= ((magic != "LASTBEER_PLATFORM_1" && magic != "LASTBEER_PLATFORM_2") ? 2 : 1) &&
-            scanlines >= 0 && scanlines <= ((magic == "LASTBEER_PLATFORM_5" || magic == "LASTBEER_PLATFORM_6" || magic == "LASTBEER_PLATFORM_7") ? 3 : 1) &&
-            brightness >= 0 && brightness <= ((magic == "LASTBEER_PLATFORM_6" || magic == "LASTBEER_PLATFORM_7") ? 150 : 4) &&
-            contrast >= 0 && contrast <= ((magic == "LASTBEER_PLATFORM_6" || magic == "LASTBEER_PLATFORM_7") ? 150 : 4) && difficulty >= 0 && difficulty <= 2 &&
+            scanlines >= 0 && scanlines <= ((magic == "LASTBEER_PLATFORM_5" || magic == "LASTBEER_PLATFORM_6" || magic == "LASTBEER_PLATFORM_7" || magic == "LASTBEER_PLATFORM_8") ? 3 : 1) &&
+            brightness >= 0 && brightness <= ((magic == "LASTBEER_PLATFORM_6" || magic == "LASTBEER_PLATFORM_7" || magic == "LASTBEER_PLATFORM_8") ? 150 : 4) &&
+            contrast >= 0 && contrast <= ((magic == "LASTBEER_PLATFORM_6" || magic == "LASTBEER_PLATFORM_7" || magic == "LASTBEER_PLATFORM_8") ? 150 : 4) && difficulty >= 0 && difficulty <= 2 &&
             font_style >= 0 && font_style <= 2 && text_color >= 0 && text_color <= 1 &&
             ((window_width == 0 && window_height == 0) || (window_width >= 4 && window_width <= 32768 && window_width % 4 == 0 && window_height == window_width / 4 * 3)) &&
-            (guid == "auto" || (guid.size() == 32 && std::all_of(guid.begin(), guid.end(), [](unsigned char c) { return std::isxdigit(c); })))) {
+            (guid == "auto" || (guid.size() == 32 && std::all_of(guid.begin(), guid.end(), [](unsigned char c) { return std::isxdigit(c); }))) &&
+            (controller_identity.empty() || controller_identity == "-" ||
+             (controller_identity.size() <= 2048 && (controller_identity[0] == 's' || controller_identity[0] == 'p' || controller_identity[0] == 'n') &&
+              std::all_of(controller_identity.begin() + 1, controller_identity.end(), [](unsigned char c) { return std::isxdigit(c); })))) {
             bool valid = true;
             for (auto &b : candidate.bindings) {
                 if (!(in >> b.primary >> b.secondary) || b.primary < 0 || !lastbeer::valid_pad_trigger(b.primary) || !lastbeer::valid_pad_trigger(b.secondary)) { valid = false; break; }
@@ -334,14 +523,24 @@ void load_preferences() {
                 }
             }
             if (valid) {
+                std::string extra;
+                int mouse = 0;
+                if (in >> extra >> mouse && extra == "MOUSE" && (mouse == 0 || mouse == 1))
+                    { candidate.mouse_control = mouse != 0; candidate.input_mode = mouse ? 1 : 0; }
+                int mode = 0;
+                if (in >> extra >> mode && extra == "INPUT_MODE" && mode >= 0 && mode <= 2) {
+                    candidate.input_mode = mode;
+                    candidate.mouse_control = mode == 1;
+                }
                 if (guid != "auto") std::transform(guid.begin(), guid.end(), guid.begin(), [](unsigned char c) { return char(std::tolower(c)); });
                 candidate.guid = guid == "auto" ? "" : guid;
+                candidate.controller_identity = controller_identity == "-" ? "" : controller_identity;
                 candidate.fullscreen = fullscreen; candidate.filter = filter; candidate.vsync = vsync;
                 candidate.scaling = scaling; candidate.scanlines = scanlines;
-                candidate.brightness = (magic == "LASTBEER_PLATFORM_6" || magic == "LASTBEER_PLATFORM_7") ? brightness : 80 + brightness * 10;
-                candidate.contrast = (magic == "LASTBEER_PLATFORM_6" || magic == "LASTBEER_PLATFORM_7") ? contrast : 80 + contrast * 10;
+                candidate.brightness = (magic == "LASTBEER_PLATFORM_6" || magic == "LASTBEER_PLATFORM_7" || magic == "LASTBEER_PLATFORM_8") ? brightness : 80 + brightness * 10;
+                candidate.contrast = (magic == "LASTBEER_PLATFORM_6" || magic == "LASTBEER_PLATFORM_7" || magic == "LASTBEER_PLATFORM_8") ? contrast : 80 + contrast * 10;
                 candidate.difficulty = difficulty;
-                if (magic == "LASTBEER_PLATFORM_7") { candidate.window_width = window_width; candidate.window_height = window_height; }
+                if (magic == "LASTBEER_PLATFORM_7" || magic == "LASTBEER_PLATFORM_8") { candidate.window_width = window_width; candidate.window_height = window_height; }
                 else {
                     constexpr int old_sizes[][2] = {{0, 0}, {640, 480}, {960, 720}, {1280, 960}};
                     candidate.window_width = old_sizes[candidate.window_size][0];
@@ -355,12 +554,21 @@ void load_preferences() {
 #ifdef LASTBEER_AUTOMATION
     if (std::getenv("LASTBEER_TEST_HARD_SPAWN")) preferences.difficulty = 2;
     if (std::getenv("LASTBEER_TEST_EASY_MODE")) preferences.difficulty = 0;
+    if (std::getenv("LASTBEER_TEST_PAD")) { preferences.input_mode = 2; preferences.mouse_control = false; }
+    if (const char *shop_mode = std::getenv("LASTBEER_TEST_SHOP_MODE")) {
+        int mode = std::atoi(shop_mode);
+        if (mode >= 0 && mode <= 2) { preferences.input_mode = mode; preferences.mouse_control = mode == 1; }
+    }
+    if (!preferences_loaded) if (const char *menu_mode = std::getenv("LASTBEER_TEST_MENU_MODE")) {
+        int mode = std::atoi(menu_mode);
+        if (mode >= 0 && mode <= 2) { preferences.input_mode = mode; preferences.mouse_control = mode == 1; }
+    }
     if (const char *entry = std::getenv("LASTBEER_TEST_SCORE_ENTRY"))
         preferences.difficulty = strcmp(entry, "easy") == 0 ? 0 : strcmp(entry, "hard") == 0 ? 2 : 1;
 #endif
     preferences_loaded = true;
     video->input().set_pad_bindings(preferences.bindings);
-    video->select_controller_guid(preferences.guid);
+    video->select_controller_saved(preferences.guid, preferences.controller_identity);
     video->set_filter(preferences.filter);
     video->set_scaling(preferences.scaling);
     video->set_scanline_strength(preferences.scanlines);
@@ -389,19 +597,30 @@ void pump() {
                 }
                 save_preferences();
             }
+            if (preferences_loaded && !preferences.guid.empty() && video->selected_controller_id() &&
+                !video->selected_controller_identity().empty() &&
+                preferences.controller_identity != video->selected_controller_identity()) {
+                preferences.controller_identity = video->selected_controller_identity();
+                save_preferences();
+            }
             const auto &input = video->input();
             int pressed_count = 0;
             for (const auto &m : mappings) {
-                key[m.legacy] = input.down(m.sdl) ? 1 : 0;
+                const bool movement = m.legacy == key_up || m.legacy == key_down || m.legacy == key_left ||
+                                      m.legacy == key_right || m.legacy == key_fire;
+                key[m.legacy] = input.down(m.sdl) && !(gameplay_input && preferences.input_mode == 2 && movement) ? 1 : 0;
                 if (key[m.legacy]) ++pressed_count;
-                if (input.pressed(m.sdl)) {
-                    auto symbol = SDL_GetKeyFromScancode(m.sdl, SDL_GetModState(), true);
+            }
+            for (const auto &press : input.key_presses()) {
+                for (const auto &m : mappings) if (m.sdl == press.scancode) {
+                    auto symbol = SDL_GetKeyFromScancode(m.sdl, press.modifiers, true);
                     int ascii = symbol >= 32 && symbol <= 126 ? int(symbol) : 0;
                     if (m.legacy == KEY_ENTER) ascii = 13;
                     if (m.legacy == KEY_BACKSPACE) ascii = 8;
                     if (m.legacy == KEY_TAB) ascii = 9;
                     if (m.legacy == KEY_ESC) ascii = 27;
                     if (key_queue.size() < 64) key_queue.push_back({(m.legacy << 8) | ascii, false});
+                    break;
                 }
             }
             const std::array actions = {
@@ -412,6 +631,7 @@ void pump() {
             };
             for (const auto &[action, legacy] : actions) {
                 if (legacy <= 0 || legacy >= 128) continue;
+                if (gameplay_input && preferences.input_mode != 2) continue;
                 if (input.pad_down(action) && !key[legacy]) { key[legacy] = 1; ++pressed_count; }
                 if (input.pad_pressed(action) && key_queue.size() < 64) {
                     // Confirm can also accept the default name on the legacy score screen.
@@ -435,11 +655,21 @@ void pump() {
 }
 void present() {
     if (!screen || !video) return;
+    if (skip_present) {
+#ifdef LASTBEER_AUTOMATION
+        if (test_stage == "playing" && std::getenv("LASTBEER_TEST_SLOW_RENDER")) ++test_skipped_presentations;
+#endif
+        pump(); return;
+    }
     frame_pixels.resize(std::size_t(screen->w) * screen->h);
     for (int y = 0; y < screen->h; ++y)
         std::copy_n(screen->pixels + y * screen->pitch, screen->w, frame_pixels.data() + std::size_t(y) * screen->w);
     try { video->present(frame_pixels, colors); }
     catch (const std::exception &e) { fail(e.what()); std::exit(1); }
+    last_presented_at = SDL_GetTicks();
+#ifdef LASTBEER_AUTOMATION
+    if (test_stage == "playing" && std::getenv("LASTBEER_TEST_SLOW_RENDER")) SDL_Delay(22);
+#endif
     pump();
 }
 void draw_blit(BITMAP *src, BITMAP *dst, int sx, int sy, int dx, int dy, int w, int h, bool masked) {
@@ -470,6 +700,13 @@ void draw_blit(BITMAP *src, BITMAP *dst, int sx, int sy, int dx, int dy, int w, 
 }
 }
 extern "C" {
+void compat_skip_present(int skip) {
+    // A persistently overloaded machine must still refresh the window.
+    skip_present = skip && SDL_GetTicks() - last_presented_at < 100;
+}
+int compat_replace_file(const char *source, const char *destination) {
+    return SDL_RenamePath(source, destination) ? 1 : 0;
+}
 int allegro_init(void) { return 0; }
 int install_keyboard(void) { return 0; }
 int install_timer(void) { return 0; }
@@ -495,6 +732,14 @@ void compat_show_startup(void) {
 }
 int install_sound(int, int, const char *) {
     if (audio) return 0;
+    if (audio_attempt) {
+        std::lock_guard lock(audio_attempt->mutex);
+        if (!audio_attempt->finished) {
+            std::fprintf(stderr, "Sound disabled: the previous audio startup is still pending.\n");
+            return -1;
+        }
+    }
+    audio_attempt.reset();
     if (executable_path.empty()) { fail("Cannot determine executable path for audio startup"); return -1; }
 #ifdef LASTBEER_AUTOMATION
     ++test_audio_probe_attempts;
@@ -520,8 +765,69 @@ int install_sound(int, int, const char *) {
         std::fprintf(stderr, "Sound disabled: the audio device %s.\n", finished ? "could not be opened" : "did not respond");
         return -1;
     }
-    try { audio = std::make_unique<lastbeer::AudioDevice>(); return 0; }
-    catch (const std::exception &e) { std::fprintf(stderr, "Sound disabled: %s\n", e.what()); return -1; }
+    // A successful probe cannot guarantee the next device open will return.
+    // Isolate that actual open too, keeping the window responsive on timeout.
+    auto attempt = std::make_shared<AudioAttempt>();
+    audio_attempt = attempt;
+#ifdef LASTBEER_AUTOMATION
+    const bool test_open_hang = std::getenv("LASTBEER_TEST_AUDIO_OPEN_HANG") != nullptr;
+#endif
+    try {
+        std::thread([attempt
+#ifdef LASTBEER_AUTOMATION
+                     , test_open_hang
+#endif
+        ] {
+#ifdef LASTBEER_AUTOMATION
+            if (test_open_hang) SDL_Delay(1800);
+#endif
+            {
+                std::lock_guard lock(attempt->mutex);
+                if (attempt->abandoned) { attempt->finished = true; return; }
+            }
+            std::unique_ptr<lastbeer::AudioDevice> device;
+            std::string error;
+            try { device = std::make_unique<lastbeer::AudioDevice>(); }
+            catch (const std::exception &e) { error = e.what(); }
+            {
+                std::lock_guard lock(attempt->mutex);
+                if (!attempt->abandoned) {
+                    attempt->device = std::move(device);
+                    attempt->error = std::move(error);
+                    attempt->finished = true;
+                    return;
+                }
+            }
+            // If the timed-out open eventually returns, close it before a
+            // later retry is allowed to start a second device.
+            device.reset();
+            std::lock_guard lock(attempt->mutex);
+            attempt->finished = true;
+        }).detach();
+    } catch (const std::exception &e) {
+        audio_attempt.reset();
+        std::fprintf(stderr, "Sound disabled: cannot start audio worker: %s\n", e.what());
+        return -1;
+    }
+    const auto open_deadline = SDL_GetTicks() + 1500;
+    for (;;) {
+        {
+            std::lock_guard lock(attempt->mutex);
+            if (attempt->finished) {
+                audio = std::move(attempt->device);
+                if (!audio) std::fprintf(stderr, "Sound disabled: %s\n", attempt->error.c_str());
+                audio_attempt.reset();
+                return audio ? 0 : -1;
+            }
+            if (SDL_GetTicks() >= open_deadline) {
+                attempt->abandoned = true;
+                std::fprintf(stderr, "Sound disabled: the audio device open did not respond.\n");
+                return -1;
+            }
+        }
+        pump();
+        SDL_Delay(10);
+    }
 }
 void remove_sound(void) { sample_voices.clear(); audio.reset(); }
 void compat_stop_all_audio(void) { if (audio) audio->mixer().stop_all(); sample_voices.clear(); }
@@ -555,6 +861,8 @@ int set_gfx_mode(int mode, int w, int h, int, int) {
         // The intro's 640x350 image is centered until the 640x480 game starts.
         if (!video) {
             video = std::make_unique<lastbeer::Video>("The Last Eichhof", 640, 480, 2);
+            video->set_beer_cursor();
+            SDL_HideCursor();
             load_preferences();
             if (mode == GFX_AUTODETECT_FULLSCREEN && !video->fullscreen()) video->set_fullscreen(true);
         }
@@ -626,14 +934,19 @@ void bmp_unwrite_line(BITMAP *) {}
 void rest(int ms) { pump(); if(ms>0) SDL_Delay(unsigned(ms)); pump(); }
 void vsync(void) { present(); SDL_Delay(16); }
 int keypressed(void) { pump(); if(key_queue.empty()) SDL_Delay(1); return !key_queue.empty(); }
-int readkey(void) { while(!keypressed()) {} int k=key_queue.front().value; key_queue.pop_front(); return k; }
+int readkey(void) { while(!keypressed()) {} auto entry=key_queue.front(); key_queue.pop_front(); last_key_gamepad=entry.gamepad; return entry.value; }
+int compat_last_key_gamepad(void) { return last_key_gamepad; }
 void compat_video_repeat_reset(void) { video_repeat_key = 0; video_repeat_at = 0; }
 void compat_video_clarity_controls(int visible) { if (video) video->set_clarity_controls(visible != 0); }
 void compat_video_mark_ui_color(int index) { if (video) video->mark_clarity_ui_color(index); }
 int compat_video_read(int repeat_adjustment) {
     if (!repeat_adjustment) compat_video_repeat_reset();
     for (;;) {
+        const bool was_fullscreen = preferences.fullscreen;
         pump();
+        // Fullscreen shortcuts are consumed by the video backend. Redraw the
+        // settings immediately so the displayed value follows the shortcut.
+        if (preferences.fullscreen != was_fullscreen) return 0;
         if (!key_queue.empty()) {
             int scan = (key_queue.front().value >> 8) & 255;
             key_queue.pop_front();
@@ -649,6 +962,48 @@ int compat_video_read(int repeat_adjustment) {
         }
         SDL_Delay(5);
     }
+}
+int compat_mouse_poll(int *x, int *y) {
+    pump();
+    const auto &input = video->input();
+    if (menu_click_seen != input.mouse_click_serial()) {
+        menu_click_seen = input.mouse_click_serial();
+        menu_motion_seen = input.mouse_motion_serial();
+        const auto p = video->window_to_frame(input.mouse_click_x(), input.mouse_click_y());
+        *x = int(p.first); *y = int(p.second);
+        return -2;
+    }
+    if (menu_motion_seen != input.mouse_motion_serial()) {
+        menu_motion_seen = input.mouse_motion_serial();
+        if (input.mouse_position_valid()) {
+            const auto p = video->window_to_frame(input.mouse_x(), input.mouse_y());
+            *x = int(p.first); *y = int(p.second);
+            return -1;
+        }
+    }
+    return 0;
+}
+void compat_mouse_cursor_visible(int visible) {
+    if (visible) SDL_ShowCursor(); else SDL_HideCursor();
+}
+int compat_menu_poll(int repeat_adjustment, int *x, int *y) {
+    if (!repeat_adjustment) compat_video_repeat_reset();
+    int mouse = compat_mouse_poll(x, y);
+    if (mouse) return mouse;
+    if (!key_queue.empty()) {
+        int scan = (key_queue.front().value >> 8) & 255;
+        key_queue.pop_front();
+        if (repeat_adjustment && (scan == key_left || scan == key_right)) {
+            video_repeat_key = scan; video_repeat_at = SDL_GetTicks() + 350;
+        } else compat_video_repeat_reset();
+        return scan;
+    }
+    if (video_repeat_key && !key[video_repeat_key]) compat_video_repeat_reset();
+    if (repeat_adjustment && video_repeat_key && SDL_GetTicks() >= video_repeat_at) {
+        video_repeat_at = SDL_GetTicks() + 60;
+        return video_repeat_key;
+    }
+    return 0;
 }
 int compat_read_binding_key(void) {
     for (;;) {
@@ -673,7 +1028,13 @@ const char *compat_key_name(int keycode) {
     name[i] = 0;
     return name;
 }
-void clear_keybuf(void) { pump(); key_queue.clear(); }
+void clear_keybuf(void) {
+    pump(); key_queue.clear();
+    if (video) {
+        menu_motion_seen = video->input().mouse_motion_serial();
+        menu_click_seen = video->input().mouse_click_serial();
+    }
+}
 char *strupr(char *s) { for(char *p=s;*p;++p) *p=char(std::toupper(static_cast<unsigned char>(*p))); return s; }
 const char *compat_config_path(void) {
     static std::string path;
@@ -705,6 +1066,7 @@ void compat_controller_select(int index) {
     if (index < -1 || (index >= 0 && std::size_t(index) >= ids.size())) return;
     video->select_controller(index < 0 ? 0 : ids[index]);
     preferences.guid = video->selected_controller_guid();
+    preferences.controller_identity = video->selected_controller_identity();
     save_preferences();
 }
 const char *compat_pad_binding_name(int action) {
@@ -804,8 +1166,93 @@ void compat_menu_set_style(int option, int value) {
 }
 int compat_difficulty(void) { return preferences.difficulty; }
 void compat_set_difficulty(int value) { if (value >= 0 && value <= 2) { preferences.difficulty = value; save_preferences(); } }
+int compat_input_mode(void) { return preferences.input_mode; }
+void compat_set_input_mode(int mode) {
+    if (mode < 0 || mode > 2) return;
+    preferences.input_mode = mode;
+    preferences.mouse_control = mode == 1;
+    mouse_target_active = false;
+    save_preferences();
+}
+void compat_mouse_gameplay_begin(int x, int y) {
+    gameplay_input = true;
+    mouse_target_active = false;
+    mouse_motion_seen = video->input().mouse_motion_serial();
+    if (preferences.mouse_control) {
+        try { video->warp_mouse_to_frame(float(x), float(y)); }
+        catch (const std::exception &e) { fail(e.what()); }
+    }
+}
+void compat_gameplay_end(void) { gameplay_input = false; }
+int compat_mouse_target(int keyboard_moving, int *x, int *y) {
+    if (!preferences.mouse_control || !video) return 0;
+    const auto &input = video->input();
+    if (mouse_motion_seen != input.mouse_motion_serial()) {
+        mouse_motion_seen = input.mouse_motion_serial();
+        mouse_target_active = true;
+    }
+    if (keyboard_moving || !input.mouse_position_valid()) mouse_target_active = false;
+    if (!mouse_target_active) return 0;
+    try {
+        const auto position = video->window_to_frame(input.mouse_x(), input.mouse_y());
+        *x = int(position.first); *y = int(position.second);
+        return 1;
+    } catch (const std::exception &e) { fail(e.what()); return 0; }
+}
+int compat_mouse_fire(void) {
+    return preferences.mouse_control && video && video->input().mouse_left_down();
+}
+int compat_random_index(int count) {
+    SDL_Time now = 0;
+    SDL_GetCurrentTime(&now);
+    auto value = std::uint64_t(now) ^ SDL_GetTicksNS() ^ SDL_GetPerformanceCounter();
+    value ^= value >> 30; value *= 0xbf58476d1ce4e5b9ULL;
+    value ^= value >> 27; value *= 0x94d049bb133111ebULL;
+    value ^= value >> 31;
+    return count > 0 ? int(value % std::uint64_t(count)) : 0;
+}
 void compat_shutdown(void) { remove_sound(); video.reset(); destroy_bitmap(screen); screen=nullptr; }
 #ifdef LASTBEER_AUTOMATION
+int compat_test_input_modes(void) {
+    video->select_controller(0);
+    for (int mode = 0; mode < 3; ++mode) {
+        compat_set_input_mode(mode);
+        load_preferences();
+        if (preferences.input_mode != mode || preferences.mouse_control != (mode == 1)) return 0;
+        gameplay_input = true;
+        test_key(SDL_SCANCODE_LEFT, true);
+        test_pad(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true);
+        SDL_Event button{}; button.type = SDL_EVENT_MOUSE_BUTTON_DOWN; button.button.button = SDL_BUTTON_LEFT;
+        SDL_PushEvent(&button);
+        pump();
+        if (!!key[key_left] != (mode != 2) || !!key[key_right] != (mode == 2) ||
+            !!compat_mouse_fire() != (mode == 1)) return 0;
+        gameplay_input = false;
+        pump();
+        if (!key[key_left] || !key[key_right]) return 0;
+        test_key(SDL_SCANCODE_LEFT, false);
+        test_pad(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, false);
+        button.type = SDL_EVENT_MOUSE_BUTTON_UP; SDL_PushEvent(&button);
+        pump();
+    }
+    compat_set_input_mode(1);
+    {
+        const auto path = preferences_path();
+        std::ifstream in(path);
+        std::string contents((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const auto marker = contents.find("INPUT_MODE ");
+        if (marker == std::string::npos) return 0;
+        contents.resize(marker);
+        std::ofstream out(path, std::ios::trunc);
+        out << contents;
+        out.close();
+        if (!out) return 0;
+        load_preferences();
+        if (preferences.input_mode != 1 || !preferences.mouse_control) return 0;
+    }
+    clear_keybuf();
+    return 1;
+}
 void compat_test_hard_spawn(int foe, int slot, int x, int direction) {
     if (foe < 0 || slot < 0) { std::fprintf(stderr, "SMOKE: invalid hard-mode spawn\n"); std::exit(1); }
     ++test_hard_spawns;
@@ -852,6 +1299,17 @@ void compat_test_menu_background(BITMAP *art) {
 }
 void compat_test_stage(const char *stage) {
     test_stage = stage;
+    if (std::getenv("LASTBEER_TEST_START_CLICK") && test_stage == "playing" && !test_start_click_sent) {
+        std::fprintf(stderr, "SMOKE: level start dismissed before mouse click\n"); std::exit(1);
+    }
+    if (std::getenv("LASTBEER_TEST_SHOP_MOUSE")) {
+        const bool shown = test_stage == "menu" || test_stage == "score" || test_stage.rfind("shop-", 0) == 0;
+        const bool hidden = test_stage == "intro" || test_stage == "title" || test_stage == "start" ||
+                            test_stage == "playing" || test_stage == "end" || test_stage == "closing";
+        if ((shown && !SDL_CursorVisible()) || (hidden && SDL_CursorVisible())) {
+            std::fprintf(stderr, "SMOKE: wrong cursor visibility during %s\n", stage); std::exit(1);
+        }
+    }
     if (const char *play_test = std::getenv("LASTBEER_TEST_PLAY_DIFFICULTY")) {
         if (test_stage == "play-difficulty") ++test_play_difficulty_steps;
         if (test_stage == "menu" && test_menus == 1 &&
@@ -873,11 +1331,19 @@ void compat_test_stage(const char *stage) {
         const bool no_entry = rank && strcmp(rank, "none") == 0;
         if (test_stage == "score-name") ++test_score_name_keys;
         if (test_stage == "score-winner") ++test_score_winner_keys;
+        if (test_stage == "score-name" && test_score_name_keys == 1)
+            if (const char *capture = std::getenv("LASTBEER_CAPTURE_SCORE")) video->save_screenshot(capture);
         if (test_stage == "score" && !no_entry) { std::fprintf(stderr, "SMOKE: extra wait after score entry\n"); std::exit(1); }
         if (test_stage == "score-entry-done") test_score_entry_done = true;
         if (test_stage == "closing") {
-            const int winner_keys = no_entry || (rank && strcmp(rank, "second") == 0) ? 0 : 2;
-            const int name_keys = no_entry ? 0 : 2;
+            const bool pad_entry = std::getenv("LASTBEER_TEST_SCORE_PAD") != nullptr;
+            const bool keyboard_entry = std::getenv("LASTBEER_TEST_SCORE_ARROWS") != nullptr;
+            const bool batch_entry = std::getenv("LASTBEER_TEST_SCORE_BATCH") != nullptr;
+            const bool mouse_entry = std::getenv("LASTBEER_TEST_SCORE_MOUSE") != nullptr;
+            const bool mixed_entry = std::getenv("LASTBEER_TEST_SCORE_MIXED") != nullptr;
+            const bool empty_entry = std::getenv("LASTBEER_TEST_SCORE_EMPTY") != nullptr;
+            const int winner_keys = no_entry || (rank && strcmp(rank, "second") == 0) ? 0 : empty_entry ? 1 : (pad_entry || keyboard_entry) ? 5 : 2;
+            const int name_keys = no_entry ? 0 : empty_entry ? 1 : (pad_entry || keyboard_entry) ? 11 : mixed_entry ? 6 : mouse_entry ? 5 : batch_entry ? 3 : 2;
             if (!test_score_entry_done || test_score_name_keys != name_keys || test_score_winner_keys != winner_keys) {
                 std::fprintf(stderr, "SMOKE: score entry did not return to the menu\n"); std::exit(1);
             }
@@ -893,13 +1359,21 @@ void compat_test_stage(const char *stage) {
         (!audio || !soundon || test_audio_probe_attempts != 1)) {
         std::fprintf(stderr, "SMOKE: audio did not start successfully\n"); std::exit(1);
     }
+    if (test_stage == "options" && std::getenv("LASTBEER_TEST_MENU_AUDIO") && test_options == 2) {
+        bool active = false;
+        for (const auto &[sample, voices] : sample_voices) {
+            (void)sample;
+            for (auto id : voices) if (audio && audio->mixer().active(id)) active = true;
+        }
+        if (!soundon || !active) { std::fprintf(stderr, "SMOKE: menu sound did not resume\n"); std::exit(1); }
+    }
     if (test_stage == "intro" && std::getenv("LASTBEER_TEST_PREVIOUS_VIDEO_CONFIG")) {
         const int version = std::getenv("LASTBEER_TEST_PREVIOUS_VIDEO_CONFIG")[0] - '0';
         if (preferences.window_size != 2 || preferences.filter != 1 || preferences.fullscreen ||
             preferences.scaling != (version == 1 ? 0 : version == 2 ? 1 : 2) || preferences.scanlines != (version != 1) ||
             preferences.window_width != 960 || preferences.window_height != 720 ||
-            preferences.brightness != (version == 4 ? 110 : version == 5 ? 90 : version == 6 ? 123 : 100) ||
-            preferences.contrast != (version == 5 ? 120 : version == 6 ? 145 : 100) || preferences.difficulty != (version >= 4 ? 2 : 1)) {
+            preferences.brightness != (version == 4 ? 110 : version == 5 ? 90 : version >= 6 ? 123 : 100) ||
+            preferences.contrast != (version == 5 ? 120 : version >= 6 ? 145 : 100) || preferences.difficulty != (version >= 4 ? 2 : 1)) {
             std::fprintf(stderr, "SMOKE: older video settings did not load\n"); std::exit(1);
         }
         std::fprintf(stderr, "SMOKE: older video settings loaded\n");
@@ -907,6 +1381,23 @@ void compat_test_stage(const char *stage) {
     if (test_stage == "intro" && std::getenv("LASTBEER_EXPECT_AUDIO_FALLBACK") &&
         (audio || soundon || test_audio_probe_attempts != 1)) {
         std::fprintf(stderr, "SMOKE: audio timeout did not fall back to silence\n"); std::exit(1);
+    }
+    if (test_stage == "intro" && std::getenv("LASTBEER_EXPECT_AUDIO_OPEN_FALLBACK") &&
+        (audio || soundon || test_audio_probe_attempts != 1)) {
+        std::fprintf(stderr, "SMOKE: audio device open timeout did not fall back to silence\n"); std::exit(1);
+    }
+    if (test_stage == "intro" && std::getenv("LASTBEER_EXPECT_AUDIO_OPEN_FALLBACK")) {
+        SDL_unsetenv_unsafe("LASTBEER_TEST_AUDIO_OPEN_HANG");
+        const auto retry_deadline = SDL_GetTicks() + 2500;
+        while (audio_attempt && SDL_GetTicks() < retry_deadline) {
+            bool finished;
+            { std::lock_guard lock(audio_attempt->mutex); finished = audio_attempt->finished; }
+            if (finished) break;
+            SDL_Delay(10);
+        }
+        if (!speaker(1) || !audio || test_audio_probe_attempts != 2) {
+            std::fprintf(stderr, "SMOKE: sound could not recover after the device open timeout\n"); std::exit(1);
+        }
     }
     if (test_stage == "intro" && std::getenv("LASTBEER_EXPECT_AUDIO_FALLBACK")) {
         SDL_unsetenv_unsafe("LASTBEER_TEST_AUDIO_HANG");
@@ -932,26 +1423,32 @@ void compat_test_stage(const char *stage) {
     }
     if (test_stage == "options") {
         ++test_options;
-        if (std::getenv("LASTBEER_TEST_MENU_STYLE") && test_options == 8) {
+        if (std::getenv("LASTBEER_TEST_MOUSE") && test_options == 3) {
+            if (!preferences.mouse_control) { std::fprintf(stderr, "SMOKE: mouse option did not enable\n"); std::exit(1); }
+            load_preferences();
+            if (!preferences.mouse_control) { std::fprintf(stderr, "SMOKE: mouse option did not persist\n"); std::exit(1); }
+        }
+        if (std::getenv("LASTBEER_TEST_MENU_STYLE") && test_options == 6) {
             load_preferences();
             if (preferences.font_style != 2 || preferences.text_color != 1 || test_menu_styles != 8) {
                 std::fprintf(stderr, "SMOKE: menu style did not persist\n"); std::exit(1);
             }
         }
-        if (std::getenv("LASTBEER_TEST_VIDEO_ADJUST") && test_options == 6) {
+        if (std::getenv("LASTBEER_TEST_VIDEO_ADJUST") && test_options == 4) {
             load_preferences();
             if (preferences.brightness != 1 || preferences.contrast != 149) {
                 std::fprintf(stderr, "SMOKE: adjusted percentages did not persist\n"); std::exit(1);
             }
         }
-        if (std::getenv("LASTBEER_TEST_DIFFICULTY_MENU") && test_options == 7) {
+        if (std::getenv("LASTBEER_TEST_DIFFICULTY_MENU") && test_options == 5) {
             load_preferences();
             if (preferences.difficulty != 2) { std::fprintf(stderr, "SMOKE: difficulty setting did not persist\n"); std::exit(1); }
         }
-        if (std::getenv("LASTBEER_TEST_PLATFORM") && test_options == 8) {
+        if (std::getenv("LASTBEER_TEST_PLATFORM") && test_options == 5) {
             load_preferences();
             if (preferences.window_size != 1 || !preferences.fullscreen || preferences.filter != 2 ||
                 preferences.scaling != 2 || preferences.scanlines != 1 || preferences.brightness != 101 || preferences.contrast != 101 ||
+                preferences.input_mode != 2 ||
                 preferences.guid.empty() || video->selected_controller_id() != test_pad_id ||
                 preferences.bindings[0].primary != SDL_GAMEPAD_BUTTON_DPAD_UP) {
                 std::fprintf(stderr, "SMOKE: platform settings did not persist\n"); std::exit(1);
@@ -962,6 +1459,16 @@ void compat_test_stage(const char *stage) {
                 std::fprintf(stderr, "SMOKE: chosen window size not applied (%d x %d)\n", width, height); std::exit(1);
             }
             std::fprintf(stderr, "SMOKE: controller and video settings persisted\n");
+        }
+    }
+    if (test_stage == "input-settings") {
+        ++test_input_settings;
+        if (test_input_settings == 1)
+            if (const char *capture = std::getenv("LASTBEER_CAPTURE_CONTROLS")) video->save_screenshot(capture);
+        const char *menu_mode = std::getenv("LASTBEER_TEST_MENU_MODE");
+        const int expected_mode = menu_mode ? (std::atoi(menu_mode) + 1) % 3 : 1;
+        if (std::getenv("LASTBEER_TEST_MOUSE_MENU") && test_input_settings == 2 && preferences.input_mode != expected_mode) {
+            std::fprintf(stderr, "SMOKE: mouse click did not select the input mode\n"); std::exit(1);
         }
     }
     if (test_stage == "controller-select") {
@@ -1032,17 +1539,58 @@ void compat_test_stage(const char *stage) {
 void compat_test_capture_menu(int enabled) {
     if (std::getenv("LASTBEER_CAPTURE_MENU")) SDL_SetHint(SDL_HINT_VIDEO_DUMMY_SAVE_FRAMES, enabled ? "1" : "0");
 }
+void compat_test_shop_stage(const char *stage, int x1, int y1, int x2, int y2) {
+    test_shop_x1 = x1; test_shop_y1 = y1; test_shop_x2 = x2; test_shop_y2 = y2;
+    test_shop_hover_sent = false; test_shop_hover_checked = false;
+    if (strcmp(stage, "shop-buy") == 0) ++test_shop_buy;
+    else if (strcmp(stage, "shop-card") == 0) ++test_shop_card;
+    else if (strcmp(stage, "shop-place") == 0) ++test_shop_place;
+    else if (strcmp(stage, "shop-sell") == 0) ++test_shop_sell;
+    compat_test_stage(stage);
+}
+void compat_test_shop_hover(int target, int selected, int fired) {
+    if (!std::getenv("LASTBEER_TEST_SHOP_HOVER") || !test_shop_hover_sent) return;
+    if (target != selected || fired) {
+        std::fprintf(stderr, "SMOKE: shop hover did not immediately select without buying\n"); std::exit(1);
+    }
+    test_shop_hover_checked = true;
+}
+void compat_test_closing_result(int reason, uint64_t elapsed) {
+    const char *mode = std::getenv("LASTBEER_TEST_CLOSING");
+    if (!mode) return;
+    const bool click = strcmp(mode, "click") == 0;
+    if ((click && (reason != 1 || elapsed < 100 || elapsed >= 4000)) ||
+        (!click && (reason != 0 || elapsed < 5000 || elapsed >= 10000))) {
+        std::fprintf(stderr, "SMOKE: closing screen dismissal failed (reason=%d elapsed=%llu)\n",
+                     reason, static_cast<unsigned long long>(elapsed));
+        std::exit(1);
+    }
+    std::fprintf(stderr, "SMOKE: closing screen %s after %llu ms\n", mode, static_cast<unsigned long long>(elapsed));
+}
 void compat_test_frame(int ship_x, int active_shots) {
     ++test_frames;
     if (test_start_x < 0 && ship_x >= 0) test_start_x = ship_x;
     if (ship_x > test_max_x) test_max_x = ship_x;
     if (active_shots > 0) test_saw_shot = true;
     if (test_frames == 5) {
-        if (std::getenv("LASTBEER_TEST_PAD")) { test_pad(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true); test_pad(SDL_GAMEPAD_BUTTON_SOUTH, true); }
+        if (std::getenv("LASTBEER_TEST_MOUSE")) {
+            int w = 0, h = 0;
+            SDL_GetWindowSize(SDL_GetWindowFromID(video->window_id()), &w, &h);
+            SDL_Event motion{}; motion.type = SDL_EVENT_MOUSE_MOTION; motion.motion.x = float(w - 1); motion.motion.y = float(h / 2); SDL_PushEvent(&motion);
+            SDL_Event button{}; button.type = SDL_EVENT_MOUSE_BUTTON_DOWN; button.button.button = SDL_BUTTON_LEFT; SDL_PushEvent(&button);
+        }
+        else if (std::getenv("LASTBEER_TEST_PAD") || (std::getenv("LASTBEER_TEST_SHOP_MODE") && preferences.input_mode == 2)) {
+            test_pad(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true); test_pad(SDL_GAMEPAD_BUTTON_SOUTH, true);
+        }
         else { test_key(SDL_SCANCODE_RIGHT, true); test_key(SDL_SCANCODE_SPACE, true); }
     }
     if (test_frames == 35) {
-        if (std::getenv("LASTBEER_TEST_PAD")) { test_pad(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, false); test_pad(SDL_GAMEPAD_BUTTON_SOUTH, false); }
+        if (std::getenv("LASTBEER_TEST_MOUSE")) {
+            SDL_Event button{}; button.type = SDL_EVENT_MOUSE_BUTTON_UP; button.button.button = SDL_BUTTON_LEFT; SDL_PushEvent(&button);
+        }
+        else if (std::getenv("LASTBEER_TEST_PAD") || (std::getenv("LASTBEER_TEST_SHOP_MODE") && preferences.input_mode == 2)) {
+            test_pad(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, false); test_pad(SDL_GAMEPAD_BUTTON_SOUTH, false);
+        }
         else { test_key(SDL_SCANCODE_RIGHT, false); test_key(SDL_SCANCODE_SPACE, false); }
     }
     if (test_frames == 40 || test_frames == 50) test_key(SDL_SCANCODE_F11, true);

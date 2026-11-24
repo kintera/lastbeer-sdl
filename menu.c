@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <errno.h>
 
 #define MENUX           142     // X-offset for first menupoint
 #define MENUY           58      // Y-offset for first menupoint
@@ -34,15 +35,26 @@
 #endif
 
 #ifdef LASTBEER_SDL
+#ifdef LASTBEER_AUTOMATION
+static int test_save_failure;
+void compat_test_set_save_failure(int enabled) { test_save_failure = enabled; }
+#endif
 /* The SDL port uses its own file because its scancodes differ from Allegro 4. */
 void loadconfig(void)
 {
    int fd;
+   int safe_to_save = 0;
    short values[7];
    const char *path = compat_config_path();
    key_up = KEY_UP; key_down = KEY_DOWN; key_left = KEY_LEFT;
    key_right = KEY_RIGHT; key_fire = KEY_SPACE; key_pause = KEY_P;
-   if (!path || (fd = open(path, O_RDONLY | O_BINARY)) < 0) return;
+   if (!path) { init_default_highscores(); return; }
+   fd = open(path, O_RDONLY | O_BINARY);
+   if (fd < 0) {
+      int missing = errno == ENOENT;
+      if (init_default_highscores() && missing) saveconfig();
+      return;
+   }
    if (read(fd, values, sizeof(values)) == sizeof(values)) {
       int valid = 1;
       for (int i = 0; i < 6; ++i) {
@@ -56,24 +68,40 @@ void loadconfig(void)
          speaker(values[6]);
       }
       /* Preserve scores even if an older or damaged key mapping is rejected. */
-      loadhighscore(&fd);
+      safe_to_save = loadhighscore(&fd) && valid;
    }
    close(fd);
+   if (init_default_highscores() && safe_to_save) saveconfig();
 }
-void saveconfig(void)
+int saveconfig_checked(void)
 {
    const char *path = compat_config_path();
    short values[7] = {key_up, key_down, key_left, key_right,
                       key_fire, key_pause, sound_config_value()};
-   int fd;
-   if (!path || (fd = open(path, O_CREAT | O_WRONLY | O_TRUNC | O_BINARY, 0600)) < 0) {
+   int fd = -1, ok = 0;
+   char *temporary;
+   if (!path || !(temporary = malloc(strlen(path) + 48))) {
       fprintf(stderr, "Could not save settings and scores.\n");
-      return;
+      return 0;
    }
-   if (write(fd, values, sizeof(values)) == sizeof(values)) savehighscore(&fd);
-   else fprintf(stderr, "Could not save settings and scores.\n");
-   close(fd);
+   for (int attempt = 0; attempt < 32 && fd < 0; ++attempt) {
+      sprintf(temporary, "%s.tmp-%llu-%d", path, (unsigned long long)compat_ticks(), attempt);
+      fd = open(temporary, O_CREAT | O_EXCL | O_WRONLY | O_BINARY, 0600);
+   }
+   if (fd >= 0) {
+      ok = write(fd, values, sizeof(values)) == sizeof(values) && savehighscore(&fd);
+#ifdef LASTBEER_AUTOMATION
+      if (test_save_failure) ok = 0;
+#endif
+      if (close(fd) != 0) ok = 0;
+      if (ok) ok = compat_replace_file(temporary, path);
+      if (!ok) remove(temporary);
+   }
+   if (!ok) fprintf(stderr, "Could not save settings and scores.\n");
+   free(temporary);
+   return ok;
 }
+void saveconfig(void) { (void)saveconfig_checked(); }
 #else
 void loadconfig(void)
 {
@@ -151,19 +179,41 @@ static void closingtime(void)
    create_sndstrc (&snd, snd_data);
    snd_handle = create_SAMPLE (&snd);
    playsample(snd_handle);
+#ifdef LASTBEER_SDL
+   clear_keybuf();
+#endif
    putspritedirect(logo, ENDLOGOX, ENDLOGOY, 0);
    glowin(0);
 
    //while(!pressedkeys && soundbusy());
+#ifndef LASTBEER_SDL
    clear_keybuf();
+#endif
 #ifdef LASTBEER_AUTOMATION
    TEST_STAGE("closing");
 #endif
+#ifdef LASTBEER_SDL
+   {
+      uint64_t start = compat_ticks();
+      int reason = 0;
+      while (compat_ticks() - start < 5000) {
+         int x, y;
+         int event = compat_menu_poll(0, &x, &y);
+         if (event == -2) { reason = 1; break; }
+         if (event > 0) { reason = 2; break; }
+         rest(5);
+      }
+#ifdef LASTBEER_AUTOMATION
+      compat_test_closing_result(reason, compat_ticks() - start);
+#endif
+   }
+#else
    while (!keypressed());
+#endif
 
    glowout();
    haltsound();
-   free(snd_handle);
+   free_SAMPLE(snd_handle);
    unloadfile((void *) snd_data);
    unloadfile((void *) logo_file); free(logo);
    clearscreen();
@@ -256,6 +306,7 @@ void showtitle(void)
    glowout();
 
    stop_sample (s);
+   free_SAMPLE(s);
    unloadfile(ptr);
    //closefile(filvar);
    //free(buffer);
@@ -311,7 +362,7 @@ static void endmenu(SAMPLE *snd, int pobj, int pspr, struct sprstrc *mspr)
    killsprite(pspr);
    unloadfile(mspr);
    stop_sample(snd);
-   free(snd);
+   free_SAMPLE(snd);
    haltsound();
 }
 
@@ -595,7 +646,7 @@ static void story(void)
    // Stop sound and free memory
    glowout();
    stop_sample (s);
-   free (s);
+   free_SAMPLE(s);
    unloadfile(sound);
    unloadfile(ptr);
 }
@@ -877,10 +928,33 @@ static void ui_show(void) {
    TEST_MENU_CAPTURE(0);
 #endif
 }
-static int ui_read(void) { return (readkey() >> 8) & 255; }
 static int ui_up(int scan) { return scan == key_up; }
 static int ui_down(int scan) { return scan == key_down; }
 static int ui_accept(int scan) { return scan == KEY_ENTER || scan == key_fire; }
+/* Mouse coordinates are in the same 320x240 space as the menu rows. */
+static int ui_read_rows(int *selected, int left, int right, int y, int step,
+                        int height, int first, int count, int video_menu)
+{
+   for (;;) {
+      int mx = 0, my = 0;
+      int scan = compat_menu_poll(video_menu && (*selected == 6 || *selected == 7), &mx, &my);
+      if (scan < 0) {
+         int row = (my - y) / step;
+         if (mx >= left && mx < right && my >= y && row >= 0 && row < count &&
+             (my - y) % step < height) {
+            int changed = *selected != first + row;
+            *selected = first + row;
+            if (scan == -2) {
+               if (video_menu && (*selected == 6 || *selected == 7))
+                  return mx < 250 ? key_left : key_right;
+               return KEY_ENTER;
+            }
+            if (changed) return 0;
+         }
+      } else if (scan) return scan;
+      rest(5);
+   }
+}
 
 static void ui_controls(struct sprstrc *title_font, struct sprstrc *font)
 {
@@ -919,7 +993,7 @@ static void ui_controls(struct sprstrc *title_font, struct sprstrc *font)
 #ifdef LASTBEER_AUTOMATION
       TEST_STAGE("controls");
 #endif
-      int scan = ui_read();
+      int scan = ui_read_rows(&selected, 12, 308, 42, 18, 17, 0, 8, 0);
       if (scan == KEY_ESC) break;
       if (ui_up(scan)) { if (selected > 0) --selected; }
       else if (ui_down(scan)) { if (selected < 7) ++selected; }
@@ -962,7 +1036,8 @@ static void ui_controller_select(struct sprstrc *title_font, struct sprstrc *fon
 #ifdef LASTBEER_AUTOMATION
       TEST_STAGE("controller-select");
 #endif
-      int scan = ui_read();
+      int scan = ui_read_rows(&selected, 12, 308, 41, 19, 17, top,
+                              last - top + 1 < 7 ? last - top + 1 : 7, 0);
       if (scan == KEY_ESC) break;
       if (ui_up(scan)) { if (selected > 0) --selected; }
       else if (ui_down(scan)) { if (selected < last) ++selected; }
@@ -1006,7 +1081,7 @@ static void ui_pad_controls(struct sprstrc *title_font, struct sprstrc *font)
 #ifdef LASTBEER_AUTOMATION
       TEST_STAGE("pad-controls");
 #endif
-      int scan = ui_read();
+      int scan = ui_read_rows(&selected, 12, 308, 39, 17, 17, 0, 9, 0);
       if (scan == KEY_ESC) break;
       if (ui_up(scan)) { if (selected > 0) --selected; }
       else if (ui_down(scan)) { if (selected < 8) ++selected; }
@@ -1029,10 +1104,11 @@ static void ui_video_settings(struct sprstrc *title_font, struct sprstrc *font)
    compat_video_repeat_reset();
    for (;;) {
       char brightness[8], contrast[8];
+      int displayed_fullscreen = compat_video_setting(0);
       snprintf(brightness, sizeof(brightness), "%d%%", compat_video_setting(6));
       snprintf(contrast, sizeof(contrast), "%d%%", compat_video_setting(7));
       ui_base(title_font, font, "OPTIONS / VIDEO");
-      ui_row(font, 37, "DISPLAY", compat_video_setting(0) ? "FULLSCREEN" : "WINDOW", selected == 0);
+      ui_row(font, 37, "DISPLAY", displayed_fullscreen ? "FULLSCREEN" : "WINDOW", selected == 0);
       ui_row(font, 55, "WINDOW SIZE", compat_video_window_size_name(), selected == 1);
       ui_row(font, 73, "IMAGE FILTER", filters[compat_video_setting(2)], selected == 2);
       ui_row(font, 91, "SCALING", scaling[compat_video_setting(3)], selected == 3);
@@ -1044,10 +1120,11 @@ static void ui_video_settings(struct sprstrc *title_font, struct sprstrc *font)
       ui_text(font, 15, 207, unavailable ? "SETTING NOT AVAILABLE" : "LEFT / RIGHT TO CHANGE");
       ui_text(font, 15, 218, "F11 OR ALT ENTER: FULLSCREEN");
       ui_show();
+      if (displayed_fullscreen != compat_video_setting(0)) continue;
 #ifdef LASTBEER_AUTOMATION
       TEST_STAGE("video-settings");
 #endif
-      int scan = compat_video_read(selected == 6 || selected == 7);
+      int scan = ui_read_rows(&selected, 12, 308, 37, 18, 17, 0, 9, 1);
       if (scan == KEY_ESC) break;
       if (ui_up(scan)) { if (selected > 0) --selected; unavailable = 0; }
       else if (ui_down(scan)) { if (selected < 8) ++selected; unavailable = 0; }
@@ -1085,7 +1162,7 @@ static void ui_menu_style(struct sprstrc *title_font, struct sprstrc *font)
 #ifdef LASTBEER_AUTOMATION
       TEST_STAGE("menu-style");
 #endif
-      int scan = ui_read();
+      int scan = ui_read_rows(&selected, 12, 308, 50, 20, 17, 0, 3, 0);
       if (scan == KEY_ESC) break;
       if (ui_up(scan)) { if (selected > 0) --selected; }
       else if (ui_down(scan)) { if (selected < 2) ++selected; }
@@ -1103,7 +1180,7 @@ static int ui_play_difficulty(struct sprstrc *title_font, struct sprstrc *font)
 {
    const char *labels[] = {"EASY", "CLASSIC", "HARD", "BACK"};
    const char *description[][2] = {
-      {"FASTER MOVEMENT", "MORE WEAPON DAMAGE"},
+      {"FASTER MOVEMENT", "MORE DAMAGE / SHOP MONEY"},
       {"ORIGINAL MOVEMENT", "ORIGINAL WEAPON DAMAGE"},
       {"SLOWER / LESS DAMAGE", "EXTRA ENEMIES CROSS THE TOP"},
       {"RETURN TO MAIN MENU", ""}
@@ -1122,7 +1199,7 @@ static int ui_play_difficulty(struct sprstrc *title_font, struct sprstrc *font)
 #ifdef LASTBEER_AUTOMATION
       TEST_STAGE("play-difficulty");
 #endif
-      int scan = ui_read();
+      int scan = ui_read_rows(&selected, 12, 308, 45, 21, 17, 0, 4, 0);
       if (scan == KEY_ESC) break;
       if (ui_up(scan)) { if (selected > 0) --selected; }
       else if (ui_down(scan)) { if (selected < 3) ++selected; }
@@ -1137,43 +1214,80 @@ static int ui_play_difficulty(struct sprstrc *title_font, struct sprstrc *font)
    return 0;
 }
 
-static void ui_options(struct sprstrc *title_font, struct sprstrc *font)
+static void ui_input_settings(struct sprstrc *title_font, struct sprstrc *font)
+{
+   const char *modes[] = {"KEYBOARD ONLY", "KEYS + MOUSE", "CONTROLLER"};
+   int selected = 0;
+   clear_keybuf();
+   for (;;) {
+      int mode = compat_input_mode();
+      ui_base(title_font, font, "OPTIONS / CONTROLS");
+      ui_row(font, 45, "INPUT MODE", modes[mode], selected == 0);
+      ui_row(font, 65, "BINDINGS", mode == 2 ? "CONTROLLER" : "KEYBOARD", selected == 1);
+      ui_row(font, 85, "SELECT CONTROLLER", NULL, selected == 2);
+      ui_row(font, 105, "CONTROLLER BINDINGS", NULL, selected == 3);
+      ui_row(font, 125, "BACK", NULL, selected == 4);
+      ui_text(font, 15, 185, "MODE APPLIES DURING PLAY");
+      ui_text(font, 15, 207, "KEYBOARD / PAD NAVIGATE MENUS");
+      ui_text(font, 15, 219, "LEFT / RIGHT TO CHANGE MODE");
+      ui_show();
+#ifdef LASTBEER_AUTOMATION
+      TEST_STAGE("input-settings");
+#endif
+      int scan = ui_read_rows(&selected, 12, 308, 45, 20, 17, 0, 5, 0);
+      if (scan == KEY_ESC) break;
+      if (ui_up(scan)) { if (selected > 0) --selected; }
+      else if (ui_down(scan)) { if (selected < 4) ++selected; }
+      else if (selected == 0 && (scan == key_left || scan == key_right || ui_accept(scan)))
+         compat_set_input_mode((mode + (scan == key_left ? 2 : 1)) % 3);
+      else if (ui_accept(scan)) {
+         if (selected == 1) { if (mode == 2) ui_pad_controls(title_font, font); else ui_controls(title_font, font); }
+         else if (selected == 2) ui_controller_select(title_font, font);
+         else if (selected == 3) ui_pad_controls(title_font, font);
+         else break;
+         ui_palette();
+      }
+   }
+   clear_keybuf();
+}
+
+static void ui_options(struct sprstrc *title_font, struct sprstrc *font, SAMPLE *music)
 {
    const char *difficulties[] = {"EASY", "CLASSIC", "HARD"};
    int selected = 0;
    clear_keybuf();
    for (;;) {
       ui_base(title_font, font, "OPTIONS");
-      ui_row(font, 36, "SOUND", speaker(-1) ? "ON" : (sound_unavailable() ? "RETRY" : "OFF"), selected == 0);
-      ui_row(font, 54, "KEYBOARD BINDINGS", NULL, selected == 1);
-      ui_row(font, 72, "SELECT CONTROLLER", NULL, selected == 2);
-      ui_row(font, 90, "CONTROLLER BINDINGS", NULL, selected == 3);
-      ui_row(font, 108, "VIDEO SETTINGS", NULL, selected == 4);
-      ui_row(font, 126, "DIFFICULTY", difficulties[compat_difficulty()], selected == 5);
-      ui_row(font, 144, "MENU STYLE", NULL, selected == 6);
-      ui_row(font, 162, "BACK", NULL, selected == 7);
-      ui_text(font, 15, 190, "KEEP YOUR BEER COLD");
+      ui_row(font, 45, "SOUND", speaker(-1) ? "ON" : (sound_unavailable() ? "RETRY" : "OFF"), selected == 0);
+      ui_row(font, 65, "CONTROLS", NULL, selected == 1);
+      ui_row(font, 85, "VIDEO SETTINGS", NULL, selected == 2);
+      ui_row(font, 105, "DIFFICULTY", difficulties[compat_difficulty()], selected == 3);
+      ui_row(font, 125, "MENU STYLE", NULL, selected == 4);
+      ui_row(font, 145, "BACK", NULL, selected == 5);
       ui_text(font, 15, 207, "MOVE KEYS / PAD  NAVIGATE");
       ui_text(font, 15, 219, "ENTER / FIRE  SELECT   ESC  BACK");
       ui_show();
 #ifdef LASTBEER_AUTOMATION
       TEST_STAGE("options");
 #endif
-      int scan = ui_read();
+      int scan = ui_read_rows(&selected, 12, 308, 45, 20, 17, 0, 6, 0);
       if (scan == KEY_ESC) break;
       if (ui_up(scan)) { if (selected > 0) --selected; }
-      else if (ui_down(scan)) { if (selected < 7) ++selected; }
-      else if (selected == 5 && (scan == key_left || scan == key_right)) {
+      else if (ui_down(scan)) { if (selected < 5) ++selected; }
+      else if (selected == 3 && (scan == key_left || scan == key_right)) {
          compat_set_difficulty((compat_difficulty() + (scan == key_left ? 2 : 1)) % 3);
       }
       else if (ui_accept(scan)) {
-         if (selected == 0) { speaker(!speaker(-1)); saveconfig(); }
-         else if (selected == 1) ui_controls(title_font, font);
-         else if (selected == 2) ui_controller_select(title_font, font);
-         else if (selected == 3) ui_pad_controls(title_font, font);
-         else if (selected == 4) ui_video_settings(title_font, font);
-         else if (selected == 5) compat_set_difficulty((compat_difficulty() + 1) % 3);
-         else if (selected == 6) ui_menu_style(title_font, font);
+         if (selected == 0) {
+            int was_on = speaker(-1);
+            if (!was_on && speaker(1) && music) playsample(music);
+            else if (was_on) speaker(0);
+            saveconfig();
+         }
+         else if (selected == 1) ui_input_settings(title_font, font);
+         else if (selected == 2) ui_video_settings(title_font, font);
+         else if (selected == 3) compat_set_difficulty((compat_difficulty() + 1) % 3);
+         else if (selected == 4) ui_menu_style(title_font, font);
          else break;
          ui_palette();
       }
@@ -1183,7 +1297,7 @@ static void ui_options(struct sprstrc *title_font, struct sprstrc *font)
 
 static void ui_stop_music(SAMPLE **sound, void **data)
 {
-   if (*sound) { stop_sample(*sound); free(*sound); *sound = NULL; }
+   if (*sound) { stop_sample(*sound); free_SAMPLE(*sound); *sound = NULL; }
    if (*data) { unloadfile(*data); *data = NULL; }
 }
 static void ui_start_music(SAMPLE **sound, void **data)
@@ -1229,6 +1343,7 @@ void menu(void)
    create_sprstrc(&font, font_data);
    create_sprstrc(&ui_cursor, cursor_data);
    showtitle();
+   compat_mouse_cursor_visible(1);
    {
       void *art_data = loadfile(datapool, "MENU.PCX");
       ui_art = create_bitmap(320, 240);
@@ -1256,29 +1371,39 @@ void menu(void)
 #ifdef LASTBEER_AUTOMATION
       TEST_STAGE("menu");
 #endif
-      while (!keypressed()) {
+      int scan = 0;
+      while (!scan) {
+         int mx = 0, my = 0;
+         int event = compat_menu_poll(0, &mx, &my);
+         if (event < 0 && mx >= 182 && mx < 312 && my >= 45 && my < 165) {
+            int row = (my - 45) / 20;
+            if ((my - 45) % 20 < 16) {
+               if (selected != row) { selected = row; ui_draw_main(title_font, font, items, selected, frame); }
+               if (event == -2) scan = KEY_ENTER;
+            }
+         } else if (event > 0) scan = event;
          int next = (int)((compat_ticks() / 120) % ui_cursor->maxn);
          if (next != frame) { frame = next; ui_draw_main(title_font, font, items, selected, frame); }
-         rest(8);
+         if (!scan) rest(8);
       }
-      int scan = ui_read();
       int action = -1;
       if (ui_up(scan)) { if (selected > 0) --selected; }
       else if (ui_down(scan)) { if (selected < 5) ++selected; }
       else if (ui_accept(scan)) action = selected;
       else if (scan >= KEY_1 && scan <= KEY_6) action = scan - KEY_1;
       if (action < 0) continue;
-      if (action == 4) { ui_options(title_font, font); ui_palette(); continue; }
+      if (action == 4) { ui_options(title_font, font, music); ui_palette(); continue; }
       if (action == 0 && !ui_play_difficulty(title_font, font)) continue;
       ui_stop_music(&music, &music_data);
       compat_video_clarity_controls(0);
+      compat_mouse_cursor_visible(0);
       if (action == 0) {
          clearscreen(); setstandardpalette(); playthegame();
       } else if (action == 1) highscore(FALSE);
       else if (action == 2) showtitle();
       else if (action == 3) story();
       else if (action == 5) { closingtime(); done = 1; }
-      if (!done) { compat_video_clarity_controls(1); ui_palette(); ui_start_music(&music, &music_data); clear_keybuf(); }
+      if (!done) { compat_mouse_cursor_visible(1); compat_video_clarity_controls(1); ui_palette(); ui_start_music(&music, &music_data); clear_keybuf(); }
    }
    ui_stop_music(&music, &music_data);
    destroy_bitmap(ui_art); ui_art = NULL;

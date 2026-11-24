@@ -246,7 +246,8 @@ start:
     dir = 1;
   }
 
-  nobjs = MAXOBJS/2;
+  /* The downward half includes slot zero as well as the midpoint. */
+  nobjs = MAXOBJS/2 + (dir < 0 ? 1 : 0);
   while (nobjs--) {
     if (s->active == FALSE) {
       s->sprite = sprite;
@@ -275,7 +276,7 @@ start:
       
       return s - _obj;
     }
-    s += dir;
+    if (nobjs) s += dir;
   }
 
   flags ^= OBJ_HIGH; /* Invert priority bit. */

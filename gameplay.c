@@ -30,6 +30,8 @@
 
 static struct sprstrc *scorebar;
 static struct sprstrc *barfont;
+static void *scorebar_data;
+static void *barfont_data;
 
 void displifes (void)
 {
@@ -218,10 +220,10 @@ static void newgame(void)
 #endif
 
 // Score Bar definition.
-  char *scorebar_data = loadfile(datapool, "BAR.SPR");
+  scorebar_data = loadfile(datapool, "BAR.SPR");
   create_sprstrc (&scorebar, scorebar_data);
 
-  char *barfont_data = loadfile(datapool, "BARFONT.SPR");
+  barfont_data = loadfile(datapool, "BARFONT.SPR");
   create_sprstrc (&barfont, barfont_data);
   if ((barfonthandle = defsprite(barfont, 2)) == -1)
      error ("newgame2", ENOMEM);
@@ -292,7 +294,10 @@ static void shutnewgame(void)
    short   *ptr;
 
    killallsprites();
-   unloadfile(scorebar);
+   free(scorebar);
+   free(barfont);
+   unloadfile(scorebar_data);
+   unloadfile(barfont_data);
    free (weapon.shot);
    unloadfile (weapon.shotfile);
    ptr = (short *)weapon.arm;
@@ -338,19 +343,28 @@ static void showstartlogo(char *text)
 #ifdef LASTBEER_AUTOMATION
    TEST_STAGE("start");
 #endif
+#ifdef LASTBEER_SDL
+   for (;;) {
+      int x, y;
+      int event = compat_menu_poll(0, &x, &y);
+      if (event == -2 || event > 0) break;
+      rest(5);
+   }
+#else
    while (!keypressed());
+#endif
 
    clearscreen();
 
-   /* We cannot call destroy_sample because we allocated some
-      of the fields in sound_handle ourselves. */
    stop_sample (sound_handle);
-   free(sound_handle);
+   free_SAMPLE(sound_handle);
 
 
-   //unloadfile(snd_data);
-   unloadfile(font);
-   unloadfile(logo);
+   unloadfile(snd_data);
+   free(font);
+   free(logo);
+   unloadfile(font_data);
+   unloadfile(logo_data);
 
 }
 
@@ -385,6 +399,7 @@ static void showendlogo(void)
 {
    void *snd_data;
    struct sndstrc snd;
+   SAMPLE *sample;
    void   *ptr;
 
    while(keypressed()) readkey();
@@ -395,7 +410,8 @@ static void showendlogo(void)
    unloadfile(ptr);
    snd_data = loadfile(datapool, "TOD.SND");
    create_sndstrc (&snd, snd_data);
-   playsample(create_SAMPLE(&snd));
+   sample = create_SAMPLE(&snd);
+   playsample(sample);
    glowin(0);
 #ifdef LASTBEER_AUTOMATION
    TEST_STAGE("end");
@@ -404,6 +420,7 @@ static void showendlogo(void)
 
    glowout();
    haltsound();
+   free_SAMPLE(sample);
    unloadfile(snd_data);
    clearscreen();
    showpage(0);
@@ -493,7 +510,11 @@ static void initlevel(int stage)
 
 // Add bonus score and money.
    score += level.descript->score;
+#ifdef LASTBEER_SDL
+   money += difficulty_level_money(game_difficulty, level.descript->money);
+#else
    money += level.descript->money;
+#endif
 }
 
 
@@ -505,6 +526,8 @@ static void shutlevel(void)
    killallbuddies();
    killallobjects();
    killstarfield();
+   for (i = 0; i < level.nsounds; i++)
+      free_SAMPLE(ptrindex[lsndofs + i]);
    for (i = 0; i < level.nsprites; i++) {
       killsprite(intindex[i + lsprofs]);
    }
@@ -516,6 +539,7 @@ static void shutlevel(void)
    free (level.expl);
    unloadfile (level.foefile);
    free (level.foe);
+   unloadfile(level.descript);
    ptr = (short *)level.attack;
    unloadfile(ptr-1);
    ptr = (short *)level.star;
@@ -556,6 +580,18 @@ void playthegame(void)
 	 showplayfield();
 	 defallarms(XSTART, YSTART);
 	 feedback = play();
+#ifdef LASTBEER_AUTOMATION
+         if (getenv("LASTBEER_TEST_SHOP_MOUSE")) {
+            int saved_cheats = cheatlevel;
+            cheatlevel |= CHEATMONEY;
+            weaponmanager();
+            if (nweapons != 3) { fprintf(stderr, "SMOKE: mouse purchases or placement failed\n"); exit(1); }
+            weaponmanager();
+            if (nweapons != 2) { fprintf(stderr, "SMOKE: mouse selling failed\n"); exit(1); }
+            cheatlevel = saved_cheats;
+            fprintf(stderr, "SMOKE: mouse shop purchase placement and selling\n");
+         }
+#endif
       } while (!feedback && (lifes > 0));
       if (!(cheatlevel & CHEATLIFES)) lifes++;
       shutlevel();

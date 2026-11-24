@@ -151,8 +151,9 @@ void cmdline(int argc, char *argv[])
 // Help?
    if (strstr(cmd, "/?") || strstr(cmd, "-?")) {	// Help?
 #ifdef LASTBEER_SDL
-      printf("Syntax: beer-sdl [--no-sound]\n");
+      printf("Syntax: beer-sdl [--no-sound] [--reset-highscores]\n");
       printf("  --no-sound   Start without initializing audio.\n");
+      printf("  --reset-highscores   Replace all three high-score tables with fresh defaults.\n");
 #else
       printf("Syntax:   BALLER [options]\n");
       printf("  /vga    Override VGA detection.\n");
@@ -259,6 +260,26 @@ int main(int argc, char *argv[])
 #endif
 // Load options of last time.
    loadconfig();
+#ifdef LASTBEER_SDL
+   if (argc == 2 && strcmp(argv[1], "--reset-highscores") == 0) {
+      int saved;
+      reset_highscores();
+      saved = saveconfig_checked();
+      powerdown();
+      if (!saved) return 1;
+      puts("High-score tables reset.");
+      return 0;
+   }
+#endif
+#ifdef LASTBEER_AUTOMATION
+   if (getenv("LASTBEER_TEST_INPUT_MODES")) {
+      int ok = compat_test_input_modes();
+      powerdown();
+      if (!ok) return 1;
+      puts("SMOKE: input modes and persistence");
+      return 0;
+   }
+#endif
 // Check command line for 'nosound' option.
    if (strstr(cmd, "/NS") || strstr(cmd, "-NS") || strstr(cmd, "--NO-SOUND")) {
 #ifdef LASTBEER_SDL

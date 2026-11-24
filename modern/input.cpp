@@ -21,7 +21,7 @@ bool valid_pad_trigger(int trigger) {
 }
 Input::Input() : bindings_(default_pad_bindings()) {}
 void Input::begin_frame() {
-    pressed_.fill(false); released_.fill(false); pad_pressed_.fill(false); text_.clear();
+    pressed_.fill(false); released_.fill(false); pad_pressed_.fill(false); text_.clear(); key_presses_.clear();
 }
 bool Input::accepts_pad(SDL_JoystickID id) const { return !filter_specific_ || (selected_pad_ && id == selected_pad_); }
 void Input::set_pad_filter(bool specific, SDL_JoystickID id) {
@@ -64,7 +64,23 @@ void Input::handle(const SDL_Event &event) {
             if (down_[i]) released_[i] = true;
             down_[i] = false;
         }
+        mouse_left_down_ = false;
+        mouse_position_valid_ = false;
         pads_.clear(); update_pad_actions();
+    }
+    if (event.type == SDL_EVENT_WINDOW_MOUSE_LEAVE) mouse_position_valid_ = false;
+    if (event.type == SDL_EVENT_MOUSE_MOTION && event.motion.which != SDL_TOUCH_MOUSEID) {
+        mouse_x_ = event.motion.x; mouse_y_ = event.motion.y;
+        mouse_position_valid_ = true;
+        ++mouse_motion_serial_;
+    }
+    if ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+        event.button.which != SDL_TOUCH_MOUSEID && event.button.button == SDL_BUTTON_LEFT) {
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && !mouse_left_down_) {
+            mouse_click_x_ = event.button.x; mouse_click_y_ = event.button.y;
+            ++mouse_click_serial_;
+        }
+        mouse_left_down_ = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
     }
     if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
         pads_.erase(event.gdevice.which);
@@ -103,7 +119,10 @@ void Input::handle(const SDL_Event &event) {
         if (!valid(key)) return;
         const auto i = static_cast<std::size_t>(key);
         if (event.type == SDL_EVENT_KEY_DOWN) {
-            if (!down_[i] && !event.key.repeat) pressed_[i] = true;
+            if (!down_[i] && !event.key.repeat) {
+                pressed_[i] = true;
+                key_presses_.push_back({key, event.key.mod});
+            }
             down_[i] = true;
         } else { if (down_[i]) released_[i] = true; down_[i] = false; }
     }

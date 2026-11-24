@@ -9,6 +9,9 @@
 #include "xmode.h"
 #include "fileman.h"
 #include "baller.h"
+#ifdef LASTBEER_SDL
+#include "modern/difficulty.h"
+#endif
 
 
 #define SHOPMAXARMS		5	// # of arms displayed on tresen.
@@ -148,7 +151,11 @@ static void placeweapon(int n)
    xy = defallarms(WEAPONX0 + (WEAPONX1 - WEAPONX0)/2,
 	      WEAPONY0 + (WEAPONY1 - WEAPONY0)/2);
 
+#ifdef LASTBEER_SDL
+   writetext(32, 0, "CLICK TO PLACE OR ESC CANCEL", font);
+#else
    writetext(160 - (13*font->xs), 0, "PLACE WEAPON OR PRESS ESC!", font);
+#endif
 
    x = (WEAPONX0 + 4) & 0xfffc;		// Start position of new weapon.
    y = (WEAPONY0 + 4) & 0xfffc;
@@ -164,7 +171,26 @@ static void placeweapon(int n)
 // Display screen and begin placing
    glowin(0);
    waitforrelease();
+#ifdef LASTBEER_SDL
+   clear_keybuf();
+#ifdef LASTBEER_AUTOMATION
+   if (getenv("LASTBEER_TEST_SHOP_MOUSE"))
+      compat_test_shop_stage("shop-place", WEAPONX0 + 12, WEAPONY0 + 12, WEAPONX1 - 12, WEAPONY1 - 12);
+#endif
+#endif
    do {
+#ifdef LASTBEER_SDL
+      int mx, my, mouse_fire = 0;
+      int mouse_event = compat_mouse_poll(&mx, &my);
+      if (mouse_event && mx >= WEAPONX0 && mx <= WEAPONX1 && my >= WEAPONY0 && my <= WEAPONY1) {
+         int new_x = (mx - obj_xs / 2 + 2) & ~3;
+         int new_y = (my - obj_ys / 2 + 2) & ~3;
+         x = max((WEAPONX0 + 4) & ~3, min(new_x, (WEAPONX1 - obj_xs - 4) & ~3));
+         y = max((WEAPONY0 + 4) & ~3, min(new_y, (WEAPONY1 - obj_ys - 4) & ~3));
+         writetext(WEAPONXTEXT, WEAPONYTEXT, "       ", font);
+         mouse_fire = mouse_event == -2;
+      }
+#endif
       updatescreen();
       objflashcolor += dir;
       if ((objflashcolor < WEAPONFLASH) || (objflashcolor > WEAPONFLASH+15)) {
@@ -193,9 +219,14 @@ static void placeweapon(int n)
 	 if (x > ((WEAPONX1 - obj_xs - 4) & 0xfffc)) x -= 4;
 	 writetext(WEAPONXTEXT, WEAPONYTEXT, "       ", font);
       }
-      if (key[key_fire]) {
+      if (key[key_fire]
+#ifdef LASTBEER_SDL
+          || mouse_fire
+#endif
+      ) {
 	 abortkey = KEYSPACE;
-	 for (i = 0; i < MAXARMS; i++) {
+         moveobject(handle, x, y);
+         for (i = 0; i < MAXARMS; i++) {
 	    if (_arm[i].object != -1) {
 	       if (crashtest(handle, _arm[i].object)) {
 		  writetext(WEAPONXTEXT, WEAPONYTEXT, "OVERLAP", font);
@@ -292,6 +323,9 @@ Description: User may abandon one or more of his weapons.
    void   *ptr;
    struct sprstrc *spr;
    int    exit;
+#ifdef LASTBEER_SDL
+   int    mouse_fire = 0;
+#endif
 
 /* exit:   -NOE-5 =>  Exitsign starts turning out
 	   -2     =>  Exitsign is turned out
@@ -337,11 +371,58 @@ Description: User may abandon one or more of his weapons.
    writetext(WEAPONXNAME, WEAPONYNAME, "EXIT", font);
 
    glowin(0);
+#ifdef LASTBEER_SDL
+   clear_keybuf();
+#ifdef LASTBEER_AUTOMATION
+   if (getenv("LASTBEER_TEST_SHOP_MOUSE")) {
+      const struct objstrc *item = &_obj[weaponlst[1].object];
+      compat_test_shop_stage("shop-sell", item->x + item->xs / 2, item->y + item->ys / 2,
+                             SELLXEXIT + _sprite[exitspr].xs / 2, SELLYEXIT + _sprite[exitspr].ys / 2);
+   }
+#endif
+#endif
 
    while ((nweapons > 1) && (exit != NOE+1)){
 
       waitforrelease();
       do {
+#ifdef LASTBEER_SDL
+         {
+            int mx, my;
+            int event = compat_mouse_poll(&mx, &my);
+            mouse_fire = 0;
+            if (event) {
+               int mouse_target = -1;
+               if (mx >= SELLXEXIT && mx < SELLXEXIT + _sprite[exitspr].xs &&
+                   my >= SELLYEXIT && my < SELLYEXIT + _sprite[exitspr].ys) mouse_target = 0;
+               else for (int n = 1; n < nweapons; ++n) {
+                  struct objstrc *item = &_obj[weaponlst[n].object];
+                  if (mx >= item->x && mx < item->x + item->xs &&
+                      my >= item->y && my < item->y + item->ys) mouse_target = n;
+               }
+               if (mouse_target >= 0) {
+                  if (selected != mouse_target) {
+                     if (selected == 0) exit = (-exit)-4;
+                     else if (mouse_target == 0) exit = ((exit == -2) ? -1 : (-exit)-4);
+                     selected = mouse_target;
+                     writetext(WEAPONXNAME, WEAPONYNAME, "                    ", font);
+                     if (selected == 0) {
+                        writetext(WEAPONXNAME, WEAPONYNAME, "EXIT", font);
+                        writetext(WEAPONXPTEXT, WEAPONYP, "                      ", font);
+                     } else {
+                        writetext(WEAPONXNAME, WEAPONYNAME, weaponlst[selected].arm.armname, font);
+                        writetext(WEAPONXPTEXT, WEAPONYP, "VALUE:", font);
+                        writenumber(WEAPONXP, WEAPONYP, (weaponlst[selected].arm.cost*3)/4, font);
+                     }
+                  }
+                  mouse_fire = event == -2;
+#ifdef LASTBEER_AUTOMATION
+                  if (event == -1) compat_test_shop_hover(mouse_target, selected, mouse_fire);
+#endif
+               }
+            }
+         }
+#endif
 	 turnsign(&exit, exitspr);
 // Flash Weapon
 	 if(selected != 0){
@@ -406,7 +487,11 @@ Description: User may abandon one or more of his weapons.
 	 waitfortick();
 	 updatescreen();
          showpage(page);
-      } while (!key[key_fire]);
+      } while (!(key[key_fire]
+#ifdef LASTBEER_SDL
+                 || mouse_fire
+#endif
+                ));
 
       if (selected != 0) {
 	 givemoneyback(selected, font);
@@ -419,6 +504,14 @@ Description: User may abandon one or more of his weapons.
 	 exit = ((exit==-2) ? (-1):((-exit)-4));
 	 writetext(WEAPONXNAME, WEAPONYNAME, "EXIT                ", font);
 	 writetext(WEAPONXPTEXT, WEAPONYP, "                      ", font);
+#ifdef LASTBEER_AUTOMATION
+         if (nweapons > 1 && getenv("LASTBEER_TEST_SHOP_MOUSE")) {
+            const struct objstrc *item = &_obj[weaponlst[1].object];
+            clear_keybuf();
+            compat_test_shop_stage("shop-sell", item->x + item->xs / 2, item->y + item->ys / 2,
+                                   SELLXEXIT + _sprite[exitspr].xs / 2, SELLYEXIT + _sprite[exitspr].ys / 2);
+         }
+#endif
       } else {
 	 exit = NOE+1;
       }
@@ -474,6 +567,9 @@ static void menucard(void)
    int    yw, ye;			// y-pos of weapon- and extra list.
    int    selected, quit;
    int    narms;
+#ifdef LASTBEER_SDL
+   int    row_y[NOFWEAPONS + 2], mouse_fire;
+#endif
    char   text[29];
    char   *font1_data, *font2_data;
    struct sprstrc *font1, *font2;
@@ -534,6 +630,9 @@ static void menucard(void)
 	 y += font1->ys + 3;
 	 narms++;
 	 weaponnumber[++selected] = i;
+#ifdef LASTBEER_SDL
+         row_y[selected] = y - (font1->ys + 3);
+#endif
       }
    }
 
@@ -548,6 +647,9 @@ static void menucard(void)
 	 writenumber(MENUXPRICE, y, weapon.arm[i].cost, font1);
 	 y += font1->ys + 3;
 	 weaponnumber[++selected] = i;
+#ifdef LASTBEER_SDL
+         row_y[selected] = y - (font1->ys + 3);
+#endif
       }
    }
 
@@ -559,6 +661,15 @@ static void menucard(void)
    glowin(0);
 
    selected = 1;
+#ifdef LASTBEER_SDL
+   row_y[weapon.narms - min(weapon.narms, SHOPMAXARMS) + 1] = MENUYEXIT;
+   clear_keybuf();
+#ifdef LASTBEER_AUTOMATION
+   if (getenv("LASTBEER_TEST_SHOP_MOUSE"))
+      compat_test_shop_stage("shop-card", MENUX + 10, row_y[1] + font1->ys / 2,
+                             MENUX + 10, MENUYEXIT + font1->ys / 2);
+#endif
+#endif
 
    do {
 
@@ -567,6 +678,26 @@ static void menucard(void)
       y = yw;
       waitforrelease();
       do {
+#ifdef LASTBEER_SDL
+         int mx, my;
+         mouse_fire = 0;
+         int event = compat_mouse_poll(&mx, &my);
+         if (event && mx >= MENUX && mx <= XMAX) {
+            int last = weapon.narms - min(weapon.narms, SHOPMAXARMS) + 1;
+            for (int row = 1; row <= last; ++row) {
+               if (my >= row_y[row] && my < row_y[row] + font1->ys + 3) {
+                  selected = row;
+                  moveobject(pointobj, MENCURX, row_y[row]);
+                  writetext(0, SHOPTEXT, "                 ", font2);
+                  mouse_fire = event == -2;
+#ifdef LASTBEER_AUTOMATION
+                  if (event == -1) compat_test_shop_hover(row, selected, mouse_fire);
+#endif
+                  break;
+               }
+            }
+         }
+#endif
 	 updatescreen();
 	 if(key[key_up]){                               	// Up
 	    writetext(0, SHOPTEXT, "                 ", font2);
@@ -611,9 +742,17 @@ static void menucard(void)
 	    }
 	 }
 	 waitfortick();
-	 if (key[key_fire] && selected != weapon.narms-min(weapon.narms, SHOPMAXARMS)+1)
+	 if ((key[key_fire]
+#ifdef LASTBEER_SDL
+              || mouse_fire
+#endif
+             ) && selected != weapon.narms-min(weapon.narms, SHOPMAXARMS)+1)
 	    quit = checkforexit(weaponnumber[selected], font2);
-      } while (!((key[key_fire]) &&
+      } while (!((key[key_fire]
+#ifdef LASTBEER_SDL
+                  || mouse_fire
+#endif
+                 ) &&
 	     ((selected == (weapon.narms-min(weapon.narms, SHOPMAXARMS)+1)) ||
 	     quit)));
 
@@ -680,6 +819,13 @@ static void menucard(void)
 	    writenumber(XMAX - (font2->xs), SHOPTEXT, money, font2);
 
 	    glowin(0);
+#ifdef LASTBEER_AUTOMATION
+            if (getenv("LASTBEER_TEST_SHOP_MOUSE")) {
+               clear_keybuf();
+               compat_test_shop_stage("shop-card", MENUX + 10, row_y[1] + font1->ys / 2,
+                                      MENUX + 10, MENUYEXIT + font1->ys / 2);
+            }
+#endif
 
 	 } else {
 	    payforweapon(weaponnumber[selected], font2);
@@ -772,6 +918,9 @@ static int buyweapon(void)
    struct  sprstrc *font, *pfont;
    int 	   value;			// Value of selected weapon
    int     ok;
+#ifdef LASTBEER_SDL
+   int mouse_fire = 0;
+#endif
 
    setvanillapalette(0);		// Go black.
    setpage(0); 
@@ -840,11 +989,76 @@ static int buyweapon(void)
 
 // Move pointer according to the pressed keys.
    waitforrelease();
+#ifdef LASTBEER_SDL
+   clear_keybuf();
+#ifdef LASTBEER_AUTOMATION
+   if (getenv("LASTBEER_TEST_SHOP_MOUSE")) {
+      int spr = intindex[weapon.arm[1].sprite];
+      compat_test_shop_stage("shop-buy", SHOPXSELL + _sprite[spr].xs / 2,
+                             SHOPYSELL - _sprite[spr].ys / 2,
+                             SHOPXEXIT + _sprite[exitspr].xs / 2, SHOPYEXIT + _sprite[exitspr].ys / 2);
+   }
+#endif
+#endif
    do {
       ok = 1;
       updatescreen();
+#ifdef LASTBEER_SDL
+      {
+         int mx, my;
+         int event = compat_mouse_poll(&mx, &my);
+         mouse_fire = 0;
+         if (event) {
+            int wx = SHOPXSELL;
+            int mouse_target = -2, target_x = x;
+            if (mx >= SHOPXEXIT && mx < SHOPXEXIT + _sprite[exitspr].xs &&
+                my >= SHOPYEXIT && my < SHOPYEXIT + _sprite[exitspr].ys) mouse_target = -1;
+            else if (mx >= 0 && mx < 45 && my >= 95 && my < 145) mouse_target = 0;
+            else for (int n = 1; n <= narms; ++n) {
+               int spr = intindex[weapon.arm[n].sprite];
+               if (mx >= wx && mx < wx + _sprite[spr].xs &&
+                   my >= SHOPYSELL - _sprite[spr].ys && my < SHOPYSELL) {
+                  mouse_target = n;
+                  target_x = wx + _sprite[spr].xs / 2 - _sprite[pointspr].xs / 2;
+               }
+               wx += _sprite[spr].xs + SHOPSPC;
+            }
+            if (mouse_target >= -1) {
+               if (selected != mouse_target) {
+                  writetext(0, SHOPTEXT, "                 ", font);
+                  if (selected == -1) {
+                     killobject(obj);
+                     putsprite(exitspr, SHOPXEXIT, SHOPYEXIT, 0);
+                     obj = defobject(pointspr, SHOPXMENU, SHOPYMENU - yspoint, OBJ_LOW);
+                  }
+                  selected = mouse_target;
+                  if (selected == -1) {
+                     killobject(obj);
+                     obj = defobject(exitspr, SHOPXEXIT, SHOPYEXIT, OBJ_LOW);
+                     writetext(0, SHOPTEXT, "EXIT SHOP", font);
+                     value = 0;
+                  } else if (selected == 0) {
+                     moveobject(obj, SHOPXMENU, SHOPYMENU - yspoint);
+                     writetext(0, SHOPTEXT, "MENU CARD", font);
+                     value = 0;
+                  } else {
+                     x = target_x;
+                     moveobject(obj, x, SHOPYSELL - SHOPARMHI - yspoint);
+                     writetext(0, SHOPTEXT, weapon.arm[selected].armname, font);
+                     value = weapon.arm[selected].cost;
+                  }
+                  placeprice(value, pfont);
+               }
+               mouse_fire = event == -2;
+#ifdef LASTBEER_AUTOMATION
+               if (event == -1) compat_test_shop_hover(mouse_target, selected, mouse_fire);
+#endif
+            }
+         }
+      }
+#endif
 
-      if ((key[key_right]) && selected < narms) {
+      if (key[key_right] && selected < narms) {
 	 writetext(0, SHOPTEXT, "                 ", font);
 	 selected++;
 	 switch (selected) {
@@ -859,6 +1073,9 @@ static int buyweapon(void)
 	       waitforrelease();
 	       break;
 	    case 1:			// Move from menu to weapons.
+#ifdef LASTBEER_SDL
+               x = SHOPXSELL + _sprite[intindex[weapon.arm[1].sprite]].xs / 2 - _sprite[pointspr].xs / 2;
+#endif
 	       moveobject(obj, x, SHOPYSELL - SHOPARMHI - yspoint);
 	       writetext(0, SHOPTEXT, weapon.arm[1].armname, font);
 	       value = weapon.arm[1].cost;
@@ -880,7 +1097,7 @@ static int buyweapon(void)
 	 }
       }
 
-      if ((key[key_left]) && selected > -1) {
+      if (key[key_left] && selected > -1) {
 	 writetext(0, SHOPTEXT, "                 ", font);
 	 selected--;
 	 switch (selected) {
@@ -914,8 +1131,11 @@ static int buyweapon(void)
 
       waitfortick();
 
-
-      if (key[key_fire]) {
+      if (key[key_fire]
+#ifdef LASTBEER_SDL
+          || mouse_fire
+#endif
+      ) {
 	 if (selected < 1) break;
 	 if (value > money) {
 	    ok = 0;
@@ -926,7 +1146,11 @@ static int buyweapon(void)
 	    writetext(0, SHOPTEXT, "NO PLACE TO PUT", font);
 	 }
 	       }
-   } while (!key[key_fire] || !ok);
+   } while (!(key[key_fire]
+#ifdef LASTBEER_SDL
+              || mouse_fire
+#endif
+             ) || !ok);
 
 // Player has pressed fire.
 
@@ -955,11 +1179,17 @@ void weaponmanager(void)
    char *ptr;
    struct sndstrc ss;
    SAMPLE *s;
+#ifdef LASTBEER_SDL
+   compat_mouse_cursor_visible(1);
+#endif
 
 
 // Calculate money
-   deltam = (score - scoreold +1500) / 2500;
-   deltam *= 5;
+#ifdef LASTBEER_SDL
+   deltam = difficulty_shop_reward(game_difficulty, score - scoreold);
+#else
+   deltam = ((score - scoreold + 1500) / 2500) * 5;
+#endif
    money += deltam;
    scoreold = score;
    if(cheatlevel & CHEATMONEY) money = 999995;
@@ -973,7 +1203,7 @@ void weaponmanager(void)
 
    if (nweapons > 1) sellweapon();
    haltsound();
-   free (s);
+   free_SAMPLE(s);
    unloadfile(ptr);
 
 // Buy weapons
@@ -985,8 +1215,10 @@ void weaponmanager(void)
 
    while (!buyweapon());
    stop_sample (s);
-   free (s);
+   free_SAMPLE(s);
    haltsound();
    unloadfile(ptr);
+#ifdef LASTBEER_SDL
+   compat_mouse_cursor_visible(0);
+#endif
 }
-

@@ -17,13 +17,31 @@ int main() {
     check(input.down(SDL_SCANCODE_LEFT) && !input.pressed(SDL_SCANCODE_LEFT), "repeat treated as new press");
     event.type = SDL_EVENT_KEY_UP; input.handle(event);
     check(!input.down(SDL_SCANCODE_LEFT) && input.released(SDL_SCANCODE_LEFT), "key release lost");
-    input.begin_frame(); event.type = SDL_EVENT_KEY_DOWN; event.key.repeat = false; input.handle(event);
+    input.begin_frame();
+    event = {}; event.type = SDL_EVENT_KEY_DOWN; event.key.scancode = SDL_SCANCODE_B; input.handle(event);
+    event.type = SDL_EVENT_KEY_UP; input.handle(event);
+    event.type = SDL_EVENT_KEY_DOWN; event.key.scancode = SDL_SCANCODE_A; input.handle(event);
+    check(input.key_presses().size() == 2 && input.key_presses()[0].scancode == SDL_SCANCODE_B &&
+          input.key_presses()[1].scancode == SDL_SCANCODE_A, "keyboard events lost their order");
+    event.type = SDL_EVENT_KEY_UP; input.handle(event);
+    input.begin_frame(); event.type = SDL_EVENT_KEY_DOWN; event.key.scancode = SDL_SCANCODE_LEFT; event.key.repeat = false; input.handle(event);
     event.type = SDL_EVENT_WINDOW_FOCUS_LOST; input.handle(event);
     check(!input.down(SDL_SCANCODE_LEFT) && input.released(SDL_SCANCODE_LEFT), "focus loss left key stuck");
     input.begin_frame();
     event = {}; event.type = SDL_EVENT_TEXT_INPUT; event.text.text = "Eichhof"; input.handle(event);
     check(input.text() == "Eichhof", "text input lost");
     input.begin_frame(); check(input.text().empty(), "text not cleared per frame");
+    event = {}; event.type = SDL_EVENT_MOUSE_MOTION;
+    event.motion.x = 123; event.motion.y = 45; input.handle(event);
+    check(input.mouse_x() == 123 && input.mouse_y() == 45 && input.mouse_motion_serial() == 1,
+          "mouse motion lost");
+    event = {}; event.type = SDL_EVENT_MOUSE_BUTTON_DOWN; event.button.button = SDL_BUTTON_LEFT; input.handle(event);
+    check(input.mouse_left_down(), "mouse button press lost");
+    event.type = SDL_EVENT_WINDOW_FOCUS_LOST; input.handle(event);
+    check(!input.mouse_left_down(), "focus loss left mouse button held");
+    event = {}; event.type = SDL_EVENT_MOUSE_BUTTON_DOWN; event.button.button = SDL_BUTTON_LEFT; input.handle(event);
+    event.type = SDL_EVENT_MOUSE_BUTTON_UP; input.handle(event);
+    check(!input.mouse_left_down(), "mouse button release lost");
     // Controller axes, D-pad and buttons combine correctly across devices.
     input.begin_frame(); event = {}; event.type = SDL_EVENT_GAMEPAD_AXIS_MOTION;
     event.gaxis.which = 1; event.gaxis.axis = SDL_GAMEPAD_AXIS_LEFTX; event.gaxis.value = 20000; input.handle(event);

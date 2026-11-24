@@ -17,6 +17,7 @@ struct sndstrc {
 
 void create_sndstrc (struct sndstrc *s, unsigned char *data);
 SAMPLE *create_SAMPLE (struct sndstrc *s);
+void free_SAMPLE (SAMPLE *sample);
 
 int initsound(int snd_io, int snd_irq, int snd_dma);
 void shutsound(void);

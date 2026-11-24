@@ -71,13 +71,17 @@ void playloop (SAMPLE *s)
 }
 
 
-/* Returns a pointer to SAMPLE. This value should be
-   freed when no longer required. destroy_sample must
-   not be called, because this attempts to free the data
-   field of SAMPLE. */
+/* Raw samples borrow archive data; packed samples own their decoded buffer. */
+struct game_sample {
+  SAMPLE sample;
+  void *decoded;
+};
+
 SAMPLE *create_SAMPLE (struct sndstrc *s)
 {
-  struct SAMPLE *sample = malloc (sizeof (struct SAMPLE));
+  struct game_sample *owned = calloc (1, sizeof (*owned));
+  if (!owned) return NULL;
+  SAMPLE *sample = &owned->sample;
 
   sample->bits = 8;
   sample->stereo = 0;
@@ -98,6 +102,8 @@ SAMPLE *create_SAMPLE (struct sndstrc *s)
       int i;
 
       int step, shift, limit, sign;
+      if (!new_sample) { free(owned); return NULL; }
+      owned->decoded = new_sample;
       step = 0;
       shift = 0;
       limit = 5;
@@ -161,6 +167,14 @@ SAMPLE *create_SAMPLE (struct sndstrc *s)
   sample->loop_end = sample->len - 1;
 
   return sample;
+}
+
+void free_SAMPLE (SAMPLE *sample)
+{
+  struct game_sample *owned = (struct game_sample *)sample;
+  if (!owned) return;
+  free(owned->decoded);
+  free(owned);
 }
 
 /* Initialize s with the data read from the file.*/

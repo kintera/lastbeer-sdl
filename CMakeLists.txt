@@ -90,6 +90,59 @@ if(LASTBEER_BUILD_SDL)
       ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-user;LASTBEER_EXPECT_AUDIO=1"
       PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45
       WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-start-click")
+    add_test(NAME sdl_level_start_click COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_level_start_click PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-start-click;LASTBEER_TEST_START_CLICK=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
+    foreach(mode timeout click)
+      file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-closing-${mode}")
+      add_test(NAME sdl_closing_${mode} COMMAND beer-sdl-automation)
+      set_tests_properties(sdl_closing_${mode} PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-closing-${mode};LASTBEER_TEST_CLOSING=${mode}"
+        PASS_REGULAR_EXPRESSION "SMOKE: closing screen ${mode}" TIMEOUT 20)
+    endforeach()
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-mouse")
+    add_test(NAME sdl_mouse_control COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_mouse_control PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-mouse;LASTBEER_TEST_MOUSE=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-input-modes")
+    add_test(NAME sdl_input_modes COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_input_modes PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-input-modes;LASTBEER_TEST_INPUT_MODES=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: input modes and persistence" TIMEOUT 15)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-mouse-menu")
+    add_test(NAME sdl_mouse_menus COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_mouse_menus PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-mouse-menu;LASTBEER_TEST_MOUSE_MENU=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-mouse-menu-controller")
+    add_test(NAME sdl_mouse_menus_controller COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_mouse_menus_controller PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-mouse-menu-controller;LASTBEER_TEST_MOUSE_MENU=1;LASTBEER_TEST_MENU_MODE=2"
+      PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-mouse-shop")
+    add_test(NAME sdl_mouse_shop COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_mouse_shop PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-mouse-shop;LASTBEER_TEST_SHOP_MOUSE=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: mouse shop purchase placement and selling" TIMEOUT 60)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-mouse-shop-hover")
+    add_test(NAME sdl_mouse_shop_hover COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_mouse_shop_hover PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-mouse-shop-hover;LASTBEER_TEST_SHOP_MOUSE=1;LASTBEER_TEST_SHOP_HOVER=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: mouse shop purchase placement and selling" TIMEOUT 60)
+    foreach(mode 1 2)
+      file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-mouse-shop-${mode}")
+      add_test(NAME sdl_mouse_shop_mode_${mode} COMMAND beer-sdl-automation)
+      set_tests_properties(sdl_mouse_shop_mode_${mode} PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-mouse-shop-${mode};LASTBEER_TEST_SHOP_MOUSE=1;LASTBEER_TEST_SHOP_MODE=${mode}"
+        PASS_REGULAR_EXPRESSION "SMOKE: mouse shop purchase placement and selling" TIMEOUT 60)
+    endforeach()
+    add_test(NAME sdl_slow_render_timing COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_slow_render_timing PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-slow-render;LASTBEER_TEST_SLOW_RENDER=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-hard-mode")
     add_test(NAME sdl_hard_mode COMMAND beer-sdl-automation)
     set_tests_properties(sdl_hard_mode PROPERTIES
@@ -101,8 +154,9 @@ if(LASTBEER_BUILD_SDL)
       ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-easy-mode;LASTBEER_TEST_EASY_MODE=1"
       PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
     add_test(NAME sdl_score_tables COMMAND beer-sdl-automation)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-score-storage")
     set_tests_properties(sdl_score_tables PROPERTIES
-      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-user;LASTBEER_TEST_SCORE_STORAGE=1"
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-score-storage;LASTBEER_TEST_SCORE_STORAGE=1"
       PASS_REGULAR_EXPRESSION "SMOKE: difficulty score tables and classic migration" TIMEOUT 15)
     foreach(difficulty easy classic hard)
       foreach(rank first second none)
@@ -113,6 +167,37 @@ if(LASTBEER_BUILD_SDL)
           PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
       endforeach()
     endforeach()
+    foreach(mode batch pad)
+      add_test(NAME sdl_score_entry_${mode} COMMAND beer-sdl-automation)
+      string(TOUPPER "${mode}" mode_upper)
+      set_tests_properties(sdl_score_entry_${mode} PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-score-entry-${mode};LASTBEER_TEST_SCORE_ENTRY=easy;LASTBEER_TEST_SCORE_RANK=first;LASTBEER_TEST_SCORE_${mode_upper}=1"
+        PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
+    endforeach()
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-score-entry-arrows")
+    add_test(NAME sdl_score_entry_arrows COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_score_entry_arrows PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-score-entry-arrows;LASTBEER_TEST_SCORE_ENTRY=easy;LASTBEER_TEST_SCORE_RANK=first;LASTBEER_TEST_SCORE_ARROWS=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-score-entry-mixed")
+    add_test(NAME sdl_score_entry_mixed COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_score_entry_mixed PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-score-entry-mixed;LASTBEER_TEST_SCORE_ENTRY=easy;LASTBEER_TEST_SCORE_RANK=first;LASTBEER_TEST_SCORE_MIXED=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-score-entry-mouse")
+    add_test(NAME sdl_score_entry_mouse COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_score_entry_mouse PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-score-entry-mouse;LASTBEER_TEST_SCORE_ENTRY=easy;LASTBEER_TEST_SCORE_RANK=first;LASTBEER_TEST_SCORE_MOUSE=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-score-entry-empty")
+    add_test(NAME sdl_score_entry_empty COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_score_entry_empty PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-score-entry-empty;LASTBEER_TEST_SCORE_ENTRY=easy;LASTBEER_TEST_SCORE_RANK=first;LASTBEER_TEST_SCORE_EMPTY=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
+    add_test(NAME sdl_menu_audio_retry COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_menu_audio_retry PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-menu-audio;LASTBEER_TEST_MENU_AUDIO=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-difficulty-menu")
     add_test(NAME sdl_difficulty_menu COMMAND beer-sdl-automation)
     set_tests_properties(sdl_difficulty_menu PROPERTIES
@@ -130,10 +215,19 @@ if(LASTBEER_BUILD_SDL)
     set_tests_properties(sdl_score_navigation PROPERTIES
       ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-score-view;LASTBEER_TEST_SCORE_VIEW=1"
       PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-score-mouse-view")
+    add_test(NAME sdl_score_mouse_navigation COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_score_mouse_navigation PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-score-mouse-view;LASTBEER_TEST_SCORE_VIEW=1;LASTBEER_TEST_SCORE_MOUSE_VIEW=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-audio-hang" "${CMAKE_CURRENT_BINARY_DIR}/test-no-audio")
     add_test(NAME sdl_audio_hang_fallback COMMAND beer-sdl-automation)
     set_tests_properties(sdl_audio_hang_fallback PROPERTIES
       ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-audio-hang;LASTBEER_TEST_AUDIO_HANG=1;LASTBEER_EXPECT_AUDIO_FALLBACK=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 20)
+    add_test(NAME sdl_audio_open_hang_fallback COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_audio_open_hang_fallback PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-audio-open-hang;LASTBEER_TEST_AUDIO_OPEN_HANG=1;LASTBEER_EXPECT_AUDIO_OPEN_FALLBACK=1"
       PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 20)
     add_test(NAME sdl_no_sound_startup COMMAND beer-sdl-automation --no-sound)
     set_tests_properties(sdl_no_sound_startup PROPERTIES
@@ -171,7 +265,7 @@ if(LASTBEER_BUILD_SDL)
     set_tests_properties(sdl_menu_style PROPERTIES
       ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-menu-style;LASTBEER_TEST_MENU_STYLE=1"
       PASS_REGULAR_EXPRESSION "SMOKE: completed" TIMEOUT 45)
-    foreach(version 1 2 3 4 5 6)
+    foreach(version 1 2 3 4 5 6 7)
       file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-video-migration-${version}")
       add_test(NAME sdl_video_migration_${version} COMMAND beer-sdl-automation)
       set_tests_properties(sdl_video_migration_${version} PROPERTIES

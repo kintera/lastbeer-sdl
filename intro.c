@@ -190,6 +190,7 @@ void intro(void)
    }
 
    stop_sample (s);
+   free_SAMPLE(s);
    //haltsound();
    unloadfile(ptr);
 
@@ -201,5 +202,4 @@ void intro(void)
    setxmode();				// Switch back to X mode.
    setstandardpalette();
 }
-
 

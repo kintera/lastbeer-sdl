@@ -39,6 +39,15 @@ int main() {
           scaled[3 * 6 + 2] == 0 && scaled[3 * 6 + 3] == 0,
           "Scale2x did not smooth the corner as expected");
     lastbeer::Video video("display test", 640, 480, 2);
+    auto *cursor = lastbeer::make_beer_cursor_surface();
+    Uint8 cr = 0, cg = 0, cb = 0, ca = 0;
+    check(cursor && cursor->w == 32 && cursor->h == 40 &&
+          SDL_ReadSurfacePixel(cursor, 8, 10, &cr, &cg, &cb, &ca) &&
+          cr > 200 && cg > 100 && cb < 80 && ca == 255,
+          "beer cursor was not rendered at its larger size");
+    check(SDL_ReadSurfacePixel(cursor, 0, 0, &cr, &cg, &cb, &ca) && ca == 0,
+          "beer cursor background was not transparent");
+    SDL_DestroySurface(cursor);
     const auto window = video.window_id();
     check(window != 0, "missing window");
     std::array<lastbeer::Color, 256> palette{};
@@ -52,6 +61,10 @@ int main() {
     rect = video.frame_destination();
     check(near(rect.x, 0) && near(rect.y, 0) && near(rect.w, 640) && near(rect.h, 480),
           "game should fill the 4:3 canvas");
+    int initial_width = 0, initial_height = 0;
+    check(SDL_GetWindowSize(SDL_GetWindowFromID(window), &initial_width, &initial_height), "cannot get window size");
+    const auto mouse_center = video.window_to_frame(initial_width / 2.0f, initial_height / 2.0f);
+    check(near(mouse_center.first, 160) && near(mouse_center.second, 120), "mouse position did not map to game canvas");
     video.present(std::vector<std::uint8_t>(320 * 240, 1), palette);
     video.set_smooth(true);
     check(video.smooth(), "smooth filtering not enabled");
@@ -179,6 +192,17 @@ int main() {
     video.set_vsync(false);
     check(video.window_id() == window, "mode change replaced the window");
     auto *native_window = SDL_GetWindowFromID(window);
+    video.set_fullscreen(true);
+    check(video.fullscreen() && (SDL_GetWindowFlags(native_window) & SDL_WINDOW_FULLSCREEN),
+          "fullscreen was not applied before returning");
+    video.set_fullscreen(false);
+    check(!video.fullscreen() && !(SDL_GetWindowFlags(native_window) & SDL_WINDOW_FULLSCREEN),
+          "windowed mode was not applied before returning");
+    video.set_window_size(800, 600);
+    int window_width = 0, window_height = 0;
+    check(SDL_GetWindowSize(native_window, &window_width, &window_height) &&
+          window_width == 800 && window_height == 600,
+          "window size was not applied before returning");
     check(native_window && SDL_SetWindowSize(native_window, 1200, 700), "resize failed");
     check(video.poll() && video.window_id() == window, "resize replaced the window");
     key_down(SDL_SCANCODE_F11);
@@ -210,6 +234,12 @@ int main() {
     check(video.poll() && video.input().pad_down(lastbeer::PadAction::Right), "connected gamepad stick not detected");
     auto second = SDL_AttachVirtualJoystick(&desc);
     check(second != 0 && video.poll(), "second controller was not detected");
+    video.select_controller(second);
+    const auto selected_guid = video.selected_controller_guid();
+    const auto selected_identity = video.selected_controller_identity();
+    video.select_controller_saved(selected_guid, selected_identity);
+    check(video.selected_controller_id() == second, "identical controller selection did not survive reload");
+    video.select_controller(id);
     auto *other = SDL_OpenJoystick(second);
     check(other != nullptr, "could not open second joystick");
     check(SDL_SetJoystickVirtualButton(joystick, SDL_GAMEPAD_BUTTON_SOUTH, false), "could not release selected controller");

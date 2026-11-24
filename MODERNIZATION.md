@@ -46,26 +46,44 @@ Default controls:
   button (A / Cross) fires and selects; the right face button (B / Circle) goes
   back or leaves a level; Start pauses.
 
-Open **Options → Keyboard Bindings** to change one keyboard action at a time.
+Choose **Options → Controls → Input Mode** for Keyboard Only, Keyboard & Mouse,
+or Controller. The mode controls gameplay; menus accept keyboard and controller
+input, and the shop also accepts mouse input. Keyboard Escape and pause remain
+available during controller gameplay. In Keyboard & Mouse mode, steer the ship
+toward the mouse pointer and fire with the left mouse button. The pointer starts at the bottle's center.
+The beer-mug pointer can also select main-menu and Options rows. The ship remains limited to its normal
+movement speed. Keyboard movement takes over until the mouse is
+moved again. The selected mode is saved between runs; older mouse-enabled settings
+are migrated to Keyboard & Mouse.
+
+Open **Options → Controls → Bindings** in a keyboard mode to change one keyboard action at a time.
 Escape or the controller's back button cancels a pending keyboard change. If a
 key is already in use, its binding swaps with the selected action. Reset Defaults
 restores all six keys. Enter, Escape and F11 are reserved for menu control and
 fullscreen.
 
-Use **Options → Select Controller** to choose a connected gamepad, or choose
-Auto to accept input from all connected gamepads. A specific selection is saved
-by device GUID and reconnects when a matching model appears. If identical
-models share a GUID, the exact unit may need to be selected again after a
-restart. A missing selected controller does not prevent keyboard navigation.
+Use **Options → Controls → Select Controller** to choose a connected gamepad, or choose
+Auto to accept input from all connected gamepads. A specific selection uses the
+device GUID and, when available, a unique serial number. Controllers without a
+unique serial are distinguished by their order among identical models, so they
+may need to be selected again if their connection order changes. A missing
+selected controller does not prevent keyboard navigation.
 
-Use **Options → Controller Bindings** to rebind each action to a button or
+Use **Options → Controls → Controller Bindings** to rebind each action to a button or
 stick direction. Selecting a used control swaps its existing action; Reset
 Defaults restores the D-pad and left-stick pair for movement. Escape or holding
 the controller's right face button cancels a pending binding; tap that button
-to bind it. Mappings apply to all controllers, and SDL must
-recognize the device as a gamepad. The score-entry screen still needs a keyboard
-to type a custom name; a controller can accept the default name. Close the
-window to exit.
+to bind it. Mappings apply to all controllers, and SDL must recognize the device
+as a gamepad. On the score-entry screen, move left/right between positions and
+up/down to change the letter; Fire advances, or finishes when DONE is selected.
+Back also finishes. Blank names and winner messages use a random spoof beer name. Close
+the window to exit.
+
+Fresh score tables start with random displayed scores from 100.01 to 499.99 and ten spoof beer brands.
+Run `beer-sdl --reset-highscores` to replace all three saved score tables with
+fresh defaults while keeping the other settings.
+Existing player scores are preserved; empty slots are filled, and the untouched
+original default table is replaced with the new defaults.
 
 **Options → Video Settings** provides windowed/fullscreen display, automatic or
 4:3 window sizes up to the current display's detected bounds, pixel-sharp, smooth and Scale2x image filters, fit, integer or stretch
@@ -73,9 +91,9 @@ scaling, adjustable scanline strength, brightness and contrast (0–150% in 1% s
 Smooth scaling uses linear filtering; Scale2x softens edges in the original
 pixel art. Neither is multisample antialiasing. Integer scaling may leave larger
 borders, while stretch fills the window and can distort the image. The SDL renderer uploads
-an indexed 320×240 gameplay framebuffer and reuses its conversion buffer. VSync
-may affect timing on displays that refresh more slowly than the game's update
-rate; it is off by default. Hold left or right to adjust brightness or contrast
+an indexed 320×240 gameplay framebuffer and reuses its conversion buffer. The
+game catches up on short rendering delays by skipping presentations; sustained
+overload can still slow it down. VSync is off by default. Hold left or right to adjust brightness or contrast
 continuously; both stop at 0% and 150%. The menu controls remain readable at
 extreme values so the adjustment can be reversed.
 
@@ -87,10 +105,15 @@ Choose a difficulty from the menu that appears when you select **Play**. Your
 last choice is preselected and can also be changed in **Options → Difficulty**.
 Classic retains the
 original movement and weapon damage. Easy moves one speed unit faster and
-does 25% more damage; Hard moves one unit slower, does 25% less damage, and
+does 25% more damage and earns twice the level money bonuses and score-based shop payout; Hard moves one unit slower, does 25% less damage, and
 occasionally sends a regular enemy from the current level across the top of
 the screen. Weapon-shop speed upgrades still apply. Difficulty remains fixed
 for the entire run.
+
+At each shop, Classic and Hard convert points earned since the previous shop
+into money using `5 * ((points + 1500) / 2500)` with integer division. Easy
+doubles that payout and the fixed level money bonuses. Classic and Hard use the same payouts.
+The mouse can select items, place weapons and sell them in the between-level shop.
 
 Each difficulty has its own high-score table. Open **High Scores** from the
 main menu and use left/right to switch tables; score entry uses the difficulty

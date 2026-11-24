@@ -87,11 +87,12 @@ void writenumber(int x, int y, long number, struct sprstrc *font)
 void killallbuddies(void)
 {
    int   i;
+   extern void clear_pending_explosions(void);
 
    for (i = 0; i < MAXARMS; i++) _arm[i].object = -1;
    for (i = 0; i < MAXFOES; i++) _foe[i].object = -1;
    for (i = 0; i < MAXSHOTS; i++) _shot[i].object = -1;
    for (i = 0; i < MAXEXPLS; i++) _expl[i].object = -1;
+   clear_pending_explosions();
 
 }
-

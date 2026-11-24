@@ -21,6 +21,15 @@ int main(int argc, char **argv)
    assert(difficulty_enemy_shield(DIFFICULTY_CLASSIC, 1) == 1);
    assert(difficulty_enemy_shield(DIFFICULTY_HARD, 1) == 4);
    assert(difficulty_enemy_shield(DIFFICULTY_HARD, 9999) == 39996);
+   assert(difficulty_shop_reward(DIFFICULTY_CLASSIC, 0) == 0);
+   assert(difficulty_shop_reward(DIFFICULTY_CLASSIC, 1000) == 5);
+   assert(difficulty_shop_reward(DIFFICULTY_CLASSIC, 10000) == 20);
+   assert(difficulty_shop_reward(DIFFICULTY_HARD, 10000) == 20);
+   assert(difficulty_shop_reward(DIFFICULTY_EASY, 10000) == 40);
+   assert(difficulty_level_money(DIFFICULTY_EASY, 500) == 1000);
+   assert(difficulty_level_money(DIFFICULTY_CLASSIC, 500) == 500);
+   assert(difficulty_level_money(DIFFICULTY_HARD, 500) == 500);
+   assert(difficulty_level_money(DIFFICULTY_EASY, 0) == 0);
    assert(argc == 2 && initfilemanager(4, 0, 8192, archive_error) == 1);
    void *db = opendatabase(argv[1]); assert(db != NULL);
    for (int level = 0; level < 5; ++level) {

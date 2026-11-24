@@ -336,8 +336,13 @@ void error(char *text, int code, ...);
 void intro(void);
 
 // Functions of module 'hiscore.c'
-void loadhighscore(int *filvar);
-void savehighscore(int *filvar);
+int loadhighscore(int *filvar);
+int savehighscore(int *filvar);
+#ifdef LASTBEER_SDL
+int init_default_highscores(void);
+void reset_highscores(void);
+int saveconfig_checked(void);
+#endif
 void highscore(char fullmode);
 
 // Functions of module 'menu.c'

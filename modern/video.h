@@ -12,6 +12,7 @@ namespace lastbeer {
 void scale2x(std::span<const std::uint32_t> input, int width, int height,
              std::span<std::uint32_t> output);
 std::vector<std::pair<int, int>> window_sizes_for_display(int width, int height);
+SDL_Surface *make_beer_cursor_surface(); // Caller owns the returned surface.
 // Owns one SDL window and displays indexed pixels with a mutable palette.
 // All calls, including construction/destruction, must be on the SDL main thread.
 class Video {
@@ -25,6 +26,9 @@ public:
     void set_frame_size(int width, int height);
     SDL_WindowID window_id() const;
     SDL_FRect frame_destination() const;
+    std::pair<float, float> window_to_frame(float x, float y) const;
+    void warp_mouse_to_frame(float x, float y);
+    void set_beer_cursor();
     bool fullscreen() const { return fullscreen_; }
     void show_loading();
     void present(std::span<const std::uint8_t> pixels, std::span<const Color, 256> palette);
@@ -35,10 +39,13 @@ public:
     std::vector<SDL_JoystickID> controller_ids() const;
     const char *controller_name(SDL_JoystickID id) const;
     std::string controller_guid(SDL_JoystickID id) const;
+    std::string controller_identity(SDL_JoystickID id) const;
     const std::string &selected_controller_guid() const { return selected_guid_; }
+    const std::string &selected_controller_identity() const { return selected_identity_; }
     SDL_JoystickID selected_controller_id() const { return selected_id_; }
     void select_controller(SDL_JoystickID id);
     void select_controller_guid(const std::string &guid);
+    void select_controller_saved(const std::string &guid, const std::string &identity);
     void set_window_size(int width, int height);
     void reset_window_size();
     std::vector<std::pair<int, int>> window_sizes() const;
@@ -68,6 +75,7 @@ private:
     SDL_Window *window_ = nullptr;
     SDL_Renderer *renderer_ = nullptr;
     SDL_Texture *texture_ = nullptr;
+    SDL_Cursor *beer_cursor_ = nullptr;
     int width_, height_; // Fixed logical canvas.
     int frame_width_ = 0, frame_height_ = 0;
     int initial_window_width_ = 0, initial_window_height_ = 0;
@@ -80,6 +88,7 @@ private:
     void open_gamepad(SDL_JoystickID id);
     void refresh_controller_selection();
     std::string selected_guid_;
+    std::string selected_identity_;
     SDL_JoystickID selected_id_ = 0;
     bool waiting_for_reconnect_ = false;
     int filter_ = 0;

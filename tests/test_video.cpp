@@ -82,6 +82,13 @@ int main() {
           "right sidebar does not show amber beer");
     check(SDL_ReadSurfacePixel(side_output, 480, 270, &sr, &sg, &sb, nullptr) && sr == 200 && sg == 0 && sb == 0,
           "sidebar covered the game view");
+    auto *full_capture = lastbeer::read_render_output(side_renderer);
+    check(full_capture && full_capture->w == 960 && full_capture->h == 540 &&
+          SDL_ReadSurfacePixel(full_capture, 70, 270, &sr, &sg, &sb, nullptr) && sr > 120 && sr > sg && sg > sb &&
+          SDL_GetRenderLogicalPresentation(side_renderer, &logical_w, &logical_h, &side_mode) &&
+          logical_w == 640 && logical_h == 480 && side_mode == SDL_LOGICAL_PRESENTATION_LETTERBOX,
+          "screenshot omitted the beer sidebars or changed the game viewport");
+    SDL_DestroySurface(full_capture);
     for (int y : {0, 539}) {
         for (int x : {60, 900})
             check(SDL_ReadSurfacePixel(side_output, x, y, &sr, &sg, &sb, nullptr) && sr == 0 && sg == 0 && sb == 0,
@@ -267,6 +274,11 @@ int main() {
     video.set_fullscreen(false);
     check(!video.fullscreen() && !(SDL_GetWindowFlags(native_window) & SDL_WINDOW_FULLSCREEN),
           "windowed mode was not applied before returning");
+    check(video.poll(), "window events failed");
+    check(SDL_SetWindowFullscreen(native_window, true) && SDL_SyncWindow(native_window) && video.poll() && video.fullscreen(),
+          "fullscreen entered outside the game was not detected");
+    check(SDL_SetWindowFullscreen(native_window, false) && SDL_SyncWindow(native_window) && video.poll() && !video.fullscreen(),
+          "fullscreen exit outside the game was not detected");
     video.set_window_size(800, 600);
     int window_width = 0, window_height = 0;
     check(SDL_GetWindowSize(native_window, &window_width, &window_height) &&

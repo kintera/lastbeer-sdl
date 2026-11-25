@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "../baller.h"
 #include "../xmode.h"
@@ -8,6 +9,7 @@ void a_shot(void);
 void a_expl(void);
 void foehit(void);
 void fire(int what);
+int defshot(int shot, int x, int y, struct anishot *addr);
 int deffoe(short foe, short x, short y, short x0, short y0);
 void clear_pending_explosions(void);
 extern short frameinc;
@@ -194,6 +196,101 @@ int test_projectile_cleanup(void)
     subtick = 1;
     a_shot();
     if (!check(_obj[first_shot].y == 94, "homing shot accelerated without a target")) return 0;
+  }
+
+  /* A sharp reversal must not leave a homing shot nearly stationary. */
+  {
+    unsigned short path[] = {SHOTHOMING};
+    reset_projectiles();
+    first_shot = defobject(sprite, 100, 100, OBJ_LOW);
+    foe = defobject(sprite, 100, 140, OBJ_LOW);
+    _foe[0].object = foe;
+    _foe[0].flags = 0;
+    _shot[0].object = first_shot;
+    _shot[0].go = 1;
+    _shot[0].data = path;
+    _shot[0].speed = 12;
+    _shot[0].dx = 0;
+    _shot[0].dy = -2;
+    subtick = 0;
+    a_shot();
+    if (!check(abs(_shot[0].dx) >= 9 || abs(_shot[0].dy) >= 9,
+               "homing shot nearly stopped while turning toward a target")) return 0;
+    _foe[0].object = -1;
+    {
+      int x = _obj[first_shot].x, y = _obj[first_shot].y;
+      for (subtick = 1; subtick < RESOLUTION; ++subtick) a_shot();
+      if (!check(abs(_obj[first_shot].x - x) + abs(_obj[first_shot].y - y) >= 3,
+                 "homing shot slowed after its target disappeared")) return 0;
+    }
+  }
+
+  /* Steering is computed once and used consistently across all subticks. */
+  {
+    unsigned short path[] = {SHOTHOMING};
+    int dx, dy;
+    reset_projectiles();
+    first_shot = defobject(sprite, 100, 100, OBJ_LOW);
+    foe = defobject(sprite, 200, 60, OBJ_LOW);
+    _foe[0].object = foe;
+    _foe[0].flags = 0;
+    _shot[0].object = first_shot;
+    _shot[0].go = 1;
+    _shot[0].data = path;
+    _shot[0].speed = 12;
+    _shot[0].dx = 0;
+    _shot[0].dy = -12;
+    subtick = 0;
+    a_shot();
+    dx = _shot[0].dx;
+    dy = _shot[0].dy;
+    for (subtick = 1; subtick < RESOLUTION; ++subtick) {
+      int x = _obj[first_shot].x, y = _obj[first_shot].y;
+      a_shot();
+      if (!check(_obj[first_shot].x - x == smooth_move(dx, subtick) &&
+                 _obj[first_shot].y - y == smooth_move(dy, subtick),
+                 "homing velocity changed within a frame")) return 0;
+    }
+  }
+
+  /* A shot with no target or saved direction must still travel. */
+  {
+    unsigned short path[] = {SHOTHOMING};
+    reset_projectiles();
+    first_shot = defobject(sprite, 100, 100, OBJ_LOW);
+    _shot[0].object = first_shot;
+    _shot[0].go = 1;
+    _shot[0].data = path;
+    _shot[0].speed = 12;
+    _shot[0].dx = _shot[0].dy = 0;
+    for (subtick = 0; subtick < RESOLUTION; ++subtick) a_shot();
+    if (!check(_obj[first_shot].y < 100, "homing shot remained stationary without a target")) return 0;
+  }
+
+  /* Reused shot slots start with a fresh direction, and a malformed zero
+     homing speed must not divide by zero when a target appears. */
+  {
+    short shot_data[] = {0, 0, 0, 1, 12, 0, SHOTHOMING};
+    long shot_offsets[] = {0};
+    reset_projectiles();
+    weapon.shotfile = (unsigned char *)shot_data;
+    weapon.shot = shot_offsets;
+    intindex[0] = sprite;
+    _shot[0].dx = 55;
+    _shot[0].dy = 66;
+    first_shot = defshot(0, 100, 100, &_shot[0]);
+    if (!check(first_shot >= 0 && _shot[0].dx == 0 && _shot[0].dy == -12,
+               "reused homing shot inherited an old direction")) return 0;
+    foe = defobject(sprite, 150, 100, OBJ_LOW);
+    _foe[0].object = foe;
+    _foe[0].flags = 0;
+    _shot[0].speed = 0;
+    subtick = 0;
+    a_shot();
+    if (!check(_shot[0].object >= 0, "zero-speed homing shot failed with a target")) return 0;
+    reset_projectiles();
+    weapon.shotfile = NULL;
+    weapon.shot = NULL;
   }
 
   /* No aimed shot should attempt to target a player who has died. */

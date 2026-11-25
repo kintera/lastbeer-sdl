@@ -110,6 +110,18 @@ bool draw_beer_sidebars(SDL_Renderer *renderer, SDL_Texture *art) {
     const bool restored = SDL_SetRenderLogicalPresentation(renderer, logical_width, logical_height, mode);
     return ok && restored;
 }
+SDL_Surface *read_render_output(SDL_Renderer *renderer) {
+    int width = 0, height = 0;
+    SDL_RendererLogicalPresentation mode{};
+    if (!SDL_GetRenderLogicalPresentation(renderer, &width, &height, &mode) ||
+        !SDL_SetRenderLogicalPresentation(renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED)) return nullptr;
+    SDL_Surface *surface = SDL_RenderReadPixels(renderer, nullptr);
+    if (!SDL_SetRenderLogicalPresentation(renderer, width, height, mode)) {
+        SDL_DestroySurface(surface);
+        return nullptr;
+    }
+    return surface;
+}
 bool draw_startup_screen(SDL_Renderer *renderer, int width) {
     if (!SDL_SetRenderDrawColor(renderer, 15, 10, 5, 255) || !SDL_RenderClear(renderer)) return false;
     auto *surface = make_window_icon_surface();
@@ -344,7 +356,7 @@ bool Video::draw_frame(const char *screenshot_path) {
     }
     bool saved = true;
     if (screenshot_path) {
-        SDL_Surface *surface = SDL_RenderReadPixels(renderer_, nullptr);
+        SDL_Surface *surface = read_render_output(renderer_);
         saved = surface && SDL_SaveBMP(surface, screenshot_path);
         SDL_DestroySurface(surface);
     }
@@ -535,6 +547,10 @@ bool Video::poll() {
     input_.begin_frame();
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN && event.window.windowID == window_id())
+            fullscreen_ = true;
+        if (event.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN && event.window.windowID == window_id())
+            fullscreen_ = false;
         if (event.type == SDL_EVENT_GAMEPAD_ADDED) open_gamepad(event.gdevice.which);
         if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
             auto it = gamepads_.find(event.gdevice.which);

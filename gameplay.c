@@ -35,17 +35,57 @@ static void *barfont_data;
 
 void displifes (void)
 {
-  int i;
-  for (i = 1; i <= 6; i++)
-    putspritedirect (barfont, BARLIFEX - i * 4,
-               BARSCOREY, BARCLRDIGIT);
+  static const unsigned char compact_digits[10][5] = {
+    {7,5,5,5,7}, {2,6,2,2,7}, {7,1,7,4,7}, {7,1,7,1,7}, {5,5,7,1,1},
+    {7,4,7,1,7}, {7,4,7,5,7}, {7,1,1,1,1}, {7,5,7,5,7}, {7,5,7,1,7}
+  };
+  int x, y, p, i;
 
-  i = lifes - 1;
-  if (i >= 5) i = 5;
+  /* Restore the entire lives area, including the rightmost bottle and any
+     extra space used by unusually large counts. Both pages must match. */
+  for (p = 0; p < 2; ++p)
+    for (y = 1; y <= 7; ++y)
+      for (x = 0; x < BARLIFEX + 4; ++x)
+        putpixel(full_pages[p], x, BARY + y,
+                 (unsigned char)scorebar->data[y * scorebar->xs + x]);
 
-  for (; i >= 0; i--)
-    putspritedirect (barfont, BARLIFEX - i * 4,
-               BARSCOREY, BARLIFEDIGIT);
+  if (lifes <= 6) {
+    for (i = 0; i < lifes; ++i)
+      putspritedirect(barfont, BARLIFEX - i * 4, BARSCOREY, BARLIFEDIGIT);
+  } else {
+    const int cross_x = BARLIFEX - 4;
+    const int color = (unsigned char)barfont->data[1];
+    char digits[3 * sizeof(lifes) + 2];
+    int length;
+    snprintf(digits, sizeof(digits), "%d", lifes);
+    length = (int)strlen(digits);
+    putspritedirect(barfont, BARLIFEX, BARSCOREY, BARLIFEDIGIT);
+
+    if (length <= 4) {
+      for (i = 0; i < length; ++i)
+        putspritedirect(barfont, cross_x - (length - i) * 4,
+                        BARSCOREY, digits[i] - '0');
+    } else {
+      /* Use a compact font and extend the black inset for large totals. */
+      int spacing = length >= 10 ? 0 : 1;
+      int width = length * 3 + (length - 1) * spacing;
+      int start = cross_x - 1 - width;
+      for (p = 0; p < 2; ++p) {
+        rectfill(full_pages[p], start, BARSCOREY, cross_x - 1, BARSCOREY + 6, 0);
+        for (i = 0; i < length; ++i)
+          for (y = 0; y < 5; ++y)
+            for (x = 0; x < 3; ++x)
+              if (compact_digits[digits[i] - '0'][y] & (1 << (2 - x)))
+                putpixel(full_pages[p], start + i * (3 + spacing) + x,
+                         BARSCOREY + 1 + y, color);
+      }
+    }
+    for (p = 0; p < 2; ++p)
+      for (y = 0; y < 3; ++y) {
+        putpixel(full_pages[p], cross_x + y, BARSCOREY + 2 + y, color);
+        putpixel(full_pages[p], cross_x + 2 - y, BARSCOREY + 2 + y, color);
+      }
+  }
 }
 
 /* Variables used to draw the score. */
@@ -571,6 +611,10 @@ static void showplayfield(void)
    setpage(1);
    displifes();
 #ifdef LASTBEER_AUTOMATION
+   if (getenv("LASTBEER_TEST_LIVES_HUD")) {
+      extern void test_lives_hud(struct sprstrc *, struct sprstrc *);
+      test_lives_hud(scorebar, barfont);
+   }
    if (getenv("LASTBEER_TEST_GAMEPLAY_HUD")) {
       if (scorebar->xs != 320 || BARY + scorebar->ys != full_pages[0]->h ||
           full_pages[1]->h != full_pages[0]->h || windowy1 != BARY ||

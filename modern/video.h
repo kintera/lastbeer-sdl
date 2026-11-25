@@ -15,6 +15,7 @@ std::vector<std::pair<int, int>> window_sizes_for_display(int width, int height)
 SDL_Surface *make_beer_cursor_surface(); // Caller owns the returned surface.
 SDL_Surface *make_beer_sidebar_surface(); // Caller owns the returned surface.
 bool draw_beer_sidebars(SDL_Renderer *renderer, SDL_Texture *art);
+SDL_Surface *read_render_output(SDL_Renderer *renderer); // Caller owns the returned surface.
 SDL_Surface *make_window_icon_surface(); // Caller owns the returned surface.
 bool draw_startup_screen(SDL_Renderer *renderer, int width);
 // Owns one SDL window and displays indexed pixels with a mutable palette.

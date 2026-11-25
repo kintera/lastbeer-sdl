@@ -118,6 +118,9 @@ int defshot (int shot, int x, int y, struct anishot *addr)
 #endif
 #endif
   ptr->speed = ss->speed;
+  /* A reused shot slot must not inherit a previous missile's direction. */
+  ptr->dx = 0;
+  ptr->dy = ptr->speed > 0 ? -ptr->speed : 0;
 
   ptr->object = defobject(intindex[ss->sprite],
                           x + ss->shotx, y + ss->shoty, OBJ_LOW);
@@ -362,6 +365,16 @@ void a_shot (void)
         struct anifoe *f = _foe;
         int fctr = MAXFOES;
         int x, y, dx, dy;
+        int speed = ptr->speed > 0 ? ptr->speed : 1;
+
+        /* Keep the same full-frame velocity throughout the subticks. A shot
+           with no prior direction heads upward until it finds a target. */
+        if (ptr->dx == 0 && ptr->dy == 0) ptr->dy = -speed;
+        if (subtick != 0) {
+          moveobjectdelta(ptr->object, smooth_move(ptr->dx, subtick),
+                          smooth_move(ptr->dy, subtick));
+          break;
+        }
 
         do {
           if (f->object == -1) continue;
@@ -387,39 +400,45 @@ void a_shot (void)
         y -= _obj[ptr->object].ya;
        
         if (abs(x) > abs(y)) {
-          y /= abs(x) / ptr->speed + 1;
+          y /= abs(x) / speed + 1;
 
           if (x < 0)
-            x = -ptr->speed;
+            x = -speed;
           else
-            x = ptr->speed;
+            x = speed;
         } else {
-          x /= abs(y) / ptr->speed + 1;
+          x /= abs(y) / speed + 1;
 
           if (y < 0)
-            y = -ptr->speed;
+            y = -speed;
           else
-            y = ptr->speed;
+            y = speed;
         }
         
         dx = ptr->dx;
         dy = ptr->dy;
 
-        if (x <= dx)
+        if (x < dx)
           dx--;
-        else
+        else if (x > dx)
           dx++;
 
-        if (y <= dy)
+        if (y < dy)
           dy--;
-        else
+        else if (y > dy)
           dy++;
 
-        if (subtick == 0)
-          {
-            ptr->dx = dx;
-            ptr->dy = dy;
+        /* Turning toward a target behind the shot must not bleed away all
+           its speed and leave it parked if that target disappears. */
+        {
+          int minimum = (speed * 3 + 3) / 4;
+          if (abs(dx) < minimum && abs(dy) < minimum) {
+            if (abs(x) > abs(y)) dx = x < 0 ? -minimum : minimum;
+            else dy = y < 0 ? -minimum : minimum;
           }
+        }
+        ptr->dx = dx;
+        ptr->dy = dy;
         moveobjectdelta (ptr->object, smooth_move (dx, subtick),
                          smooth_move (dy, subtick));
         }

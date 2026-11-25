@@ -79,7 +79,7 @@ if(LASTBEER_BUILD_SDL)
     target_compile_definitions(test_difficulty PRIVATE DATADIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME difficulty_rules COMMAND test_difficulty "${CMAKE_CURRENT_SOURCE_DIR}/BEER.DAT")
     add_executable(beer-sdl-automation ${LASTBEER_GAME_SOURCES})
-    target_sources(beer-sdl-automation PRIVATE tests/test_projectiles.c)
+    target_sources(beer-sdl-automation PRIVATE tests/test_projectiles.c tests/test_lives_hud.c)
     target_include_directories(beer-sdl-automation BEFORE PRIVATE modern/compat)
     target_compile_definitions(beer-sdl-automation PRIVATE LASTBEER_SDL LASTBEER_AUTOMATION
       DATADIR="${LASTBEER_DATA_DIR}" LOCALSTATEDIR="${CMAKE_CURRENT_BINARY_DIR}")
@@ -109,6 +109,10 @@ if(LASTBEER_BUILD_SDL)
     set_tests_properties(sdl_gameplay_hud PROPERTIES
       ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-gameplay-hud;LASTBEER_TEST_GAMEPLAY_HUD=1"
       PASS_REGULAR_EXPRESSION "SMOKE: gameplay status bar reaches the bottom" TIMEOUT 45)
+    add_test(NAME sdl_lives_hud COMMAND beer-sdl-automation)
+    set_tests_properties(sdl_lives_hud PROPERTIES
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-lives-hud;LASTBEER_TEST_LIVES_HUD=1"
+      PASS_REGULAR_EXPRESSION "SMOKE: lives HUD shows six bottles, then a count and bottle" TIMEOUT 45)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-start-click")
     add_test(NAME sdl_level_start_click COMMAND beer-sdl-automation)
     set_tests_properties(sdl_level_start_click PROPERTIES
